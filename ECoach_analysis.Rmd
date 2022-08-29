@@ -1,0 +1,2687 @@
+---
+title: "Real-World Effectiveness of a Social-Psychological Intervention Translated from Controlled Trials to Classrooms"
+output:
+  html_document:
+    theme: darkly
+    toc: yes
+    toc_depth: 3
+    toc_float: yes
+    highlight: tango
+    df_print: paged
+    code_folding: hide
+  html_notebook:
+    toc: yes
+    toc_depth: '3'
+fontsize: 18pt
+---
+
+
+
+Authors: Patricia Chen, Dennis W. H. Teo, Daniel X. Y. Foo, Holly A. Derry, Benjamin T. Hayward, Kyle W. Schulz, Caitlin Hayward, Timothy A. McKay, & Desmond C. Ong
+
+Accepted in principle at <i>npj Science of Learning.</i>
+
+APA Citation:
+
+
+> Chen, P., Teo, D. W. H., Foo, D. X. Y., Derry, H. A., Hayward, B. T., Schulz, K. W., Hayward, C., McKay, T. A., & Ong, D. C. (accepted). Real-World Effectiveness of a Social-Psychological Intervention Translated from Controlled Trials to Classrooms. <i>npj Science of Learning.</i>
+
+
+
+## Readme
+
+Analysis code written by Dennis Teo, Daniel Foo, and Desmond Ong.
+Please direct any questions to Desmond Ong.
+
+Code dated <b>25 May 2022</b>, and available at https://osf.io/6qej7 
+
+This file contains all the code we used to perform the analyses reported in the paper. This R Markdown file, run together with the data files, will produce the output HTML file. 
+
+To request access the data files, please see the Data Availability Statement in the paper.
+
+The remainder of this file is structured in a similar flow as the Results section of the paper (and the Supplemental Information), and numbers in the text are automatically piped in from R variables (and usually left to more decimal places, so there may be slight rounding discrepancies with the numbers in the paper, which are tailored to APA standards).
+
+
+```{r preamble, echo=T, message=F, warning=F}
+library(car) # Anova
+library(tidyverse)
+library(lme4)
+library(meta) # metagen
+library(MatchIt) # matching analysis
+library(lmtest) #coeftest
+library(lmerTest)
+library(sandwich) #vcovCL
+library(gridExtra) # grid.arrange
+
+select <- dplyr::select
+recode <- dplyr::recode
+mutate <- dplyr::mutate
+
+set.seed(42) # for reproducibility if there are any stochastic functions.
+source('ECoach Functions.R', echo=F)
+```
+
+```{r read-in-data, echo=T}
+# To request access the data files, please see the Data Availability Statement.
+exam.lvl = read.csv("ecoach-exam-lvl-full.csv") 
+user.lvl = read.csv("ecoach-user-lvl-full.csv")
+
+new.labels <- c("Introductory Biology","General Chemistry","Introductory Economics",
+                "Elementary Programming","Introductory Programming (Engin)",
+                  "General Physics", "Introduction to Statistics")
+
+ORDERED.LABELS <- sort(new.labels)
+COURSE_NUM_VECTOR = rep(1:7, each=2) + rep(c(-0.2, +0.2), 7) 
+```
+
+
+# Results {.tabset}
+
+```{r sample-breakdown-for-all-classes, echo=T, eval=T}
+#Sample breakdown at class level 
+class.breakdown <- user.lvl %>% 
+  group_by(course, semester) %>% 
+  summarize(n = n(), 
+            num_playbook = sum(pb_condition == "playbook"), 
+            num_non_playbook = sum(pb_condition == "non-playbook"),
+            playbook_use_percentage = round(num_playbook/n, digits=3) *100,
+            .groups = "drop_last")
+
+# # total students (double counting across classes)
+# cat("Total number of students:", nrow(user.lvl))
+# 
+# # total unique students (no double count)
+# cat("Total number of unique students:", length(unique(user.lvl$user_id)))
+### Note that we did not specially account for students enrolled in multiple classes
+
+```
+
+We examined `r nrow(user.lvl)` students' use (versus non-use) of the Exam Playbook across 14 introductory STEM and Economics classes over 2 consecutive (Fall and Winter) semesters. The 7 courses included in each semester were: Introductory Statistics, Introductory Biology, General Chemistry, General Physics, Introductory Programming (for Engineers), Introductory Programming (for Programmers), and Introductory Economics. A breakdown of sample demographics is presented in Supplemental Table 1.
+
+
+Across both semesters, on average, 
+`r format(mean(class.breakdown$playbook_use_percentage), digits=4)`% 
+(SD = `r format(sd(class.breakdown$playbook_use_percentage), digits=4)`%; 
+range: `r format(min(class.breakdown$playbook_use_percentage), digits=4)` -
+`r format(max(class.breakdown$playbook_use_percentage), digits=4)`%) 
+of students in each class engaged with the Exam Playbook at least once. We operationalized a “use” of the Exam Playbook to mean accessing and completing the intervention, which includes: completing the resource checklist, explaining why each resource would be useful, and planning resource use. That is, students had to click through to the end of the intervention to be counted as having used it (Supplementary Note 1 contains further details about how we defined and operationalized “use”). Apart from varying across classes, Exam Playbook use also varied between exams, as a student might choose to use it on one exam but not another. Note that the original intervention was only offered before 2 exams (i.e., 2 doses maximum), but in this translational study, it was offered before all available exams in each class, which could differ by class (with the exception of Physics Exam 4 when it was not offered). Table 1 gives a detailed breakdown of the number of times the Exam Playbook was offered and used on each exam across the different classes.
+
+## Table 1: Breakdown of the Usage of Exam Playbook
+
+```{r table-1, echo=T, eval=T}
+LABELS_ORDERED_FOR_TABLE <- 
+  c("Introduction to Statistics",
+    "Introductory Biology", "General Chemistry", "General Physics",
+    "Introductory Programming (Engin)", "Elementary Programming",
+    "Introductory Economics")
+
+class.breakdown %>% 
+  arrange(match(course, LABELS_ORDERED_FOR_TABLE), semester) %>%
+  select(-num_non_playbook) %>%
+  rename(
+    Course = course,
+    Semester = semester,
+    `Class Size` = n,
+    `Number of users on any exam` = num_playbook,
+    `(Percentage)` = playbook_use_percentage
+  ) 
+
+#TODO: What about by exam level. (the additional columns to the right of Table 1)
+```
+
+Note. "Any Exam" gives the number (and percentage) of students who used the Exam Playbook at least once in the class. Numbers for individual exams indicate percentage of students in the class who used the Exam Playbook on that exam. Classes had between 2 to 4 exams.
+
+## Supplemental Table 1: Demographics of the students in our sample
+
+
+```{r demographics, echo=T, eval=T}
+## Demographics
+
+ALL_DEMO = user.lvl %>% group_by(semester) %>% summarize(n=n(), .groups="keep")
+FALL_TOTAL = ALL_DEMO$n[ALL_DEMO$semester=="Fall"]
+WINTER_TOTAL = ALL_DEMO$n[ALL_DEMO$semester=="Winter"]
+
+gender.demo <- user.lvl %>% 
+  mutate(gender = as.character(gender),
+         gender = ifelse(is.na(gender), "Not Indicated", gender),
+         gender = factor(gender, levels=c("Male", "Female", "Not Indicated"))) %>%
+  group_by(semester, gender) %>% 
+  summarize(n = n(), .groups="keep") %>% 
+  pivot_wider(id_cols = gender,
+              names_from = semester,
+              values_from = n) %>%
+  mutate(Fall_percent = paste("(", 
+                              as.character(format(Fall/FALL_TOTAL*100, digits=3)), 
+                              "%)", sep=""),
+         Winter_percent = paste("(", 
+                                as.character(format(Winter/WINTER_TOTAL*100, digits=3)), 
+                                "%)", sep="")) %>%
+  unite(Fall, c("Fall", "Fall_percent"), sep = " ") %>%
+  unite(Winter, c("Winter", "Winter_percent"), sep = " ")
+
+
+
+acad.lvl <- user.lvl %>% 
+  mutate(academic.level = as.character(ACAD_LVL_BOT_SHORT_DES),
+         academic.level = ifelse(is.na(academic.level), "None", academic.level),
+         academic.level = factor(academic.level, 
+                                 levels=c("Freshman", "Sophomore", "Junior", 
+                                          "Senior", "USpec/NCFD", "None")),
+         academic.level = fct_collapse(academic.level, 
+                                       `Not Indicated` = c("USpec/NCFD", "None"))) %>%
+  group_by(semester, academic.level) %>% 
+  summarize(n = n(), .groups="keep") %>% 
+  pivot_wider(id_cols = academic.level,
+              names_from = semester,
+              values_from = n) %>%
+  mutate(Fall_percent = paste("(", 
+                              as.character(format(Fall/FALL_TOTAL*100, digits=3)), 
+                              "%)", sep=""),
+         Winter_percent = paste("(", 
+                                as.character(format(Winter/WINTER_TOTAL*100, digits=3)), 
+                                "%)", sep="")) %>%
+  unite(Fall, c("Fall", "Fall_percent"), sep = " ") %>%
+  unite(Winter, c("Winter", "Winter_percent"), sep = " ")
+
+race.demo <- user.lvl %>%
+  mutate(race_table = as.character(race),
+         race_table = ifelse(is.na(race_table), "None", race_table),
+         race_table = as.factor(race_table),
+         race_table = fct_collapse(race_table, 
+                                   Caucasian = c("White"),
+                                   `African-American` = c("Black"),
+                                   Others = c("Hawaiian", "Native Amr", "2 or More"),
+                                   `Not Indicated` = c("Not Indic", "None"))) %>%
+  group_by(semester, race_table) %>% 
+  summarize(n = n(), .groups="keep") %>% 
+  pivot_wider(id_cols = race_table,
+              names_from = semester,
+              values_from = n) %>% 
+  arrange(match(race_table, 
+                c("Caucasian", "African-American", "Hispanic",
+                  "Asian", "Others", "Not Indicated") )) %>%
+  mutate(Fall_percent = paste("(", 
+                              as.character(format(Fall/FALL_TOTAL*100, digits=3)), 
+                              "%)", sep=""),
+         Winter_percent = paste("(", 
+                                as.character(format(Winter/WINTER_TOTAL*100, digits=3)), 
+                                "%)", sep="")) %>%
+  unite(Fall, c("Fall", "Fall_percent"), sep = " ") %>%
+  unite(Winter, c("Winter", "Winter_percent"), sep = " ")
+
+income <- user.lvl %>%
+  mutate(EST_GROSS_FAM_INC_CD = 
+           recode(EST_GROSS_FAM_INC_CD, "Lower Income" = "Less than US$50,000", 
+                  "Middle Income" = "US$50,000 - US$99,999", 
+                  "Upper Income" = "More than US$100,000"),
+         income.level = as.character(EST_GROSS_FAM_INC_CD),
+         income.level = ifelse(is.na(income.level), "Not Indicated", income.level),
+         income.level = factor(income.level, 
+                               levels=c("Less than US$50,000",
+                                        "US$50,000 - US$99,999",
+                                        "More than US$100,000",
+                                        "Not Indicated"))) %>%
+  group_by(semester, income.level) %>% 
+  summarize(n = n(), .groups="keep") %>% 
+  pivot_wider(id_cols = income.level,
+              names_from = semester,
+              values_from = n) %>%
+  mutate(Fall_percent = paste("(", 
+                              as.character(format(Fall/FALL_TOTAL*100, digits=3)), 
+                              "%)", sep=""),
+         Winter_percent = paste("(", 
+                                as.character(format(Winter/WINTER_TOTAL*100, digits=3)), 
+                                "%)", sep="")) %>%
+  unite(Fall, c("Fall", "Fall_percent"), sep = " ") %>%
+  unite(Winter, c("Winter", "Winter_percent"), sep = " ")
+
+
+
+firstgen.demo <- user.lvl %>% 
+  mutate(first.gen.status = as.character(firstgen),
+         first.gen.status = ifelse(is.na(first.gen.status), "Not Indicated", first.gen.status),
+         first.gen.status = factor(first.gen.status, 
+                                   levels=c(1,0,"Not Indicated"),
+                                   labels=c("First-generation", "Non-First-generation", 
+                                            "Not Indicated"))) %>%
+  group_by(semester, first.gen.status) %>% 
+  summarize(n = n(), .groups="keep") %>% 
+  pivot_wider(id_cols = first.gen.status,
+              names_from = semester,
+              values_from = n) %>%
+  mutate(Fall_percent = paste("(", 
+                              as.character(format(Fall/FALL_TOTAL*100, digits=3)), 
+                              "%)", sep=""),
+         Winter_percent = paste("(", 
+                                as.character(format(Winter/WINTER_TOTAL*100, digits=3)), 
+                                "%)", sep="")) %>%
+  unite(Fall, c("Fall", "Fall_percent"), sep = " ") %>%
+  unite(Winter, c("Winter", "Winter_percent"), sep = " ")
+
+
+
+multi.enrol <- user.lvl %>%
+  group_by(semester, multi_enroll) %>% 
+  summarize(n = n(), .groups="keep") %>% 
+  pivot_wider(id_cols = multi_enroll,
+              names_from = semester,
+              values_from = n) %>% 
+  filter(multi_enroll == 1) %>%
+  mutate(Fall_percent = paste("(", 
+                              as.character(format(Fall/FALL_TOTAL*100, digits=3)), 
+                              "%)", sep=""),
+         Winter_percent = paste("(", 
+                                as.character(format(Winter/WINTER_TOTAL*100, digits=3)), 
+                                "%)", sep="")) %>%
+  unite(Fall, c("Fall", "Fall_percent"), sep = " ") %>%
+  unite(Winter, c("Winter", "Winter_percent"), sep = " ")
+
+
+
+
+
+gender.demo
+acad.lvl
+race.demo
+income
+firstgen.demo
+multi.enrol
+
+  
+##Gender 
+# gender.demo <- user.lvl %>% 
+#   group_by(semester, gender) %>% 
+#   summarize(n = n(), .groups="keep")
+# 
+# gender.demo$total <- NA
+# gender.demo$total[which(gender.demo$semester == "Fall")] <- sum(gender.demo$n[which(gender.demo$semester == "Fall")])
+# gender.demo$total[which(gender.demo$semester == "Winter")] <- sum(gender.demo$n[which(gender.demo$semester == "Winter")])
+# gender.demo <- gender.demo %>%  # add percentage
+#   rowwise() %>% 
+#   mutate(percentage = n/total*100) 
+#
+# #race
+# race.demo <- user.lvl %>% 
+#   group_by(semester, race) %>% 
+#   count() 
+# race.demo$total <- NA
+# race.demo$total[which(race.demo$semester == "Fall")] <- sum(race.demo$n[which(race.demo$semester == "Fall")])
+# race.demo$total[which(race.demo$semester == "Winter")] <- sum(race.demo$n[which(race.demo$semester == "Winter")])
+# race.demo <- race.demo %>%  # add percentage
+#   rowwise() %>% 
+#   mutate(percentage = n/total*100) 
+# 
+# #First Generation
+# firstgen.demo <- user.lvl %>% 
+#   group_by(semester, firstgen) %>% 
+#   count() 
+# 
+# firstgen.demo$total <- NA
+# firstgen.demo$total[which(firstgen.demo$semester == "Fall")] <- sum(firstgen.demo$n[which(firstgen.demo$semester == "Fall")])
+# firstgen.demo$total[which(firstgen.demo$semester == "Winter")] <- sum(firstgen.demo$n[which(firstgen.demo$semester == "Winter")])
+# firstgen.demo <- firstgen.demo %>%  # add percentage
+#   rowwise() %>% 
+#   mutate(percentage = n/total*100) 
+#
+# #academic level
+# acad.lvl <- user.lvl %>% 
+#   group_by(semester, ACAD_LVL_BOT_SHORT_DES) %>% 
+#   count() 
+# acad.lvl$total <- NA
+# acad.lvl$total[which(acad.lvl$semester == "Fall")] <- sum(acad.lvl$n[which(acad.lvl$semester == "Fall")])
+# acad.lvl$total[which(acad.lvl$semester == "Winter")] <- sum(acad.lvl$n[which(acad.lvl$semester == "Winter")])
+# acad.lvl <- acad.lvl %>% 
+#   rowwise() %>% 
+#   mutate(percentage = n/total*100) # add percentage
+# 
+# # multi enroll students
+# multi.enrol <- user.lvl %>%
+#   group_by(semester, multi_enroll) %>% 
+#   count() 
+# multi.enrol$total <- NA
+# multi.enrol$total[which(multi.enrol$semester == "Fall")] <- sum(multi.enrol$n[which(multi.enrol$semester == "Fall")])
+# multi.enrol$total[which(multi.enrol$semester == "Winter")] <- sum(multi.enrol$n[which(multi.enrol$semester == "Winter")])
+# multi.enrol <- multi.enrol %>% 
+#   rowwise() %>% 
+#   mutate(percentage = n/total*100) # add percentage
+# 
+# #income
+# income <- user.lvl %>%
+#   group_by(semester, EST_GROSS_FAM_INC_CD) %>% 
+#   count() %>% 
+#   mutate(EST_GROSS_FAM_INC_CD = recode(EST_GROSS_FAM_INC_CD, "Lower Income" = "Less than US$50,000", 
+#                                        "Middle Income" = "US$50,000 - US$99,999", 
+#                                        "Upper Income" = "More than US$100,000"))
+# income$total <- NA
+# income$total[which(income$semester == "Fall")] <- sum(income$n[which(income$semester == "Fall")])
+# income$total[which(income$semester == "Winter")] <- sum(income$n[which(income$semester == "Winter")])
+# income <- income %>% 
+#   rowwise() %>% 
+#   mutate(percentage = n/total*100) # add percentage
+#
+# gender.demo
+# race.demo
+# firstgen.demo
+# acad.lvl
+# multi.enrol
+# income
+```
+
+
+
+
+
+# 1. Does Self-Administration of the Exam Playbook Predict Exam Performance?
+
+
+## 1.1 Effect Size of Playbook use (comparing Playbook vs non-Playbook users) {.tabset}
+
+```{r calculate-playbook-effect-using-raw-scores, message=F, echo=T, eval=T}
+# initialising
+pb_condition.effect <- data.frame(
+  estimate = rep(NA,length(unique(user.lvl$course_semester))),
+  se = rep(NA,length(unique(user.lvl$course_semester))),
+  course_semester = unique(user.lvl$course_semester),
+  standardized_estimate = rep(NA,length(unique(user.lvl$course_semester))),
+  standardized_se = rep(NA,length(unique(user.lvl$course_semester)))
+)
+
+for (i in 1:length(unique(user.lvl$course_semester))){ # regress by class
+  this_course_semester = pb_condition.effect$course_semester[i]
+  
+  model.temp <- user.lvl %>% 
+    filter(course_semester == this_course_semester) %>%
+    lm(exam_score_avrg ~ pb_condition, data = .) %>% 
+    summary()
+  
+  pb_condition.effect$estimate[i] <- 
+    model.temp$coefficients["pb_conditionplaybook", "Estimate"]
+  pb_condition.effect$se[i] <- 
+    model.temp$coefficients["pb_conditionplaybook", "Std. Error"]
+  
+  model.temp.standardized <- user.lvl %>% 
+    filter(course_semester == this_course_semester) %>%
+    lm(exam_score_avrg_standardized ~ pb_condition, data = .) %>% 
+    summary()
+  
+  pb_condition.effect$standardized_estimate[i] <- 
+    model.temp.standardized$coefficients["pb_conditionplaybook", "Estimate"]
+  pb_condition.effect$standardized_se[i] <- 
+    model.temp.standardized$coefficients["pb_conditionplaybook", "Std. Error"]
+}
+
+pb_condition.effect <- pb_condition.effect %>%
+  arrange(course_semester) %>% # arrange by course semester
+  mutate(
+    course = rep(ORDERED.LABELS, each=2),
+    semester = rep(c("Fall", "Winter"), 7 ),
+    course_num = COURSE_NUM_VECTOR
+  )
+
+pb_condition.effect.summary <- metagen(pb_condition.effect$estimate, 
+                                       pb_condition.effect$se)
+
+pb_condition.effect.standardized.summary <- metagen(pb_condition.effect$standardized_estimate,
+                                                    pb_condition.effect$standardized_se) 
+# look at "random effects model" of metagen output
+
+semester_correlation = cor.test(
+  (pb_condition.effect %>% filter(semester == "Fall") %>% arrange(course))$estimate,
+  (pb_condition.effect %>% filter(semester == "Winter") %>% arrange(course))$estimate)
+```
+
+
+
+We tested the hypothesis that using the Exam Playbook benefits students' exam performance, by comparing the average exam scores of students who used the Exam Playbook at least once in the class with students who did not use the Exam Playbook at all. Following recent recommendations in statistics and psychological science to move toward a focus on effect-size estimation (Wasserstein & Lazar, 2016; Brady et al., 2016; Cumming, 2014), we ran a "mini meta-analysis" (Goh et al., 2016) across the 14 classes using a random-effects meta-analysis model (Borenstein et al., 2010), treating each class as a separate "experiment" and with a mind towards analyzing heterogeneity across classes. This allowed us to estimate the generalizability of the effect across classes, as well as the variation due to inter-class differences---both of which are important for understanding how the Exam Playbook can benefit future students in various subjects.
+
+
+Our meta-analysis, summarized in Figure 1, revealed that students who used the Exam Playbook in their class scored
+`r report(pb_condition.effect.summary$TE.random)` 
+(`r report.ci(pb_condition.effect.summary$TE.random, pb_condition.effect.summary$seTE.random)`, 
+p `r report.p(pb_condition.effect.summary$pval.random)`) 
+percentage points higher than non-users, for their average exam score (normalized and upon 100 percentage points). 
+To put this effect size into context, a 
+`r report(pb_condition.effect.summary$TE.random)` 
+percentage point difference translates to a standardized difference (Cohen’s d) of 
+`r report(pb_condition.effect.standardized.summary$TE.random)`
+--a substantial effect for a free, highly scalable, and self-administered intervention. As mentioned earlier, a difference of 0.2 is considered a large difference in field research on factors that predict educational outcomes, especially for low-cost and scalable interventions (Hill et al., 2008; Kraft et al., 2018; Yeager et al., 2019). 
+As Figure 1 shows, the effect was positive in 13 out of 14 classes, and there was a high correlation of 
+r = `r report(semester_correlation$estimate)`
+(p`r report.p(semester_correlation$p.value)`) 
+between the effect sizes for each class across both semesters.  
+
+
+### Figure 1: Meta-analysis of the Effect of Using the Exam Playbook
+
+```{r plotting-forest-plot-raw-score, echo=TRUE, eval=TRUE, fig.width=10, fig.height=6}
+pb_condition.effect.plothelp <- data.frame(
+  "x.diamond" = c(
+    pb_condition.effect.summary$TE.random - 1.96*pb_condition.effect.summary$seTE.random,
+    pb_condition.effect.summary$TE.random,
+    pb_condition.effect.summary$TE.random + 1.96*pb_condition.effect.summary$seTE.random,
+    pb_condition.effect.summary$TE.random),
+  "y.diamond" = c(
+    8,
+    8 + 0.2, 
+    8,
+    8 - 0.2)
+)
+
+## re-ordering based on effect size
+pb_condition.effect.sum_by_class = pb_condition.effect %>% 
+  group_by(course) %>% 
+  summarise(es = mean(estimate), .groups="drop_last") %>% 
+  arrange(es)
+# 1 General Physics                  0.0857
+# 2 General Chemistry                0.734 
+# 3 Intro Economics                  1.73 
+# 4 Intro Biology                    1.90
+# 5 Intro Programming (Engineers)    2.79 
+# 6 Intro Programming (Programmers)  2.85 
+# 7 Intro Statistics                 5.83  
+
+# 1  General Physics	                0.1234743		
+# 2  General Chemistry	              0.7419212		
+# 3  Introductory Biology	            1.3172378		
+# 4  Introductory Programming (Engin)	1.6031804		
+# 5  Introductory Economics	          1.7309801		
+# 6  Elementary Programming	          2.8814635		
+# 7  Introduction to Statistics	      5.9574770	
+
+pb_condition.effect.reorder.by.es <- pb_condition.effect %>% 
+  arrange(factor(course, levels = 
+                   c("General Physics", "General Chemistry", 
+                     "Introductory Biology", "Introductory Programming (Engin)",
+                     "Introductory Economics", "Elementary Programming",  
+                     "Introduction to Statistics")), semester) %>% 
+  mutate(course_num = COURSE_NUM_VECTOR)
+
+reordered.labels.for.graph = 
+  c("General Physics", "General Chemistry", 
+    "Intro Biology", "Intro Programming (Engineers)", 
+    "Intro Economics", "Intro Programming (Programmers)", 
+    "Intro Statistics")
+
+
+overall.meta.graph <- ggplot(pb_condition.effect.reorder.by.es) + 
+  geom_point(aes(x = estimate, y = course_num, color = semester), size = 3) + 
+  geom_errorbarh(aes(xmin=estimate - 1.96*se, xmax=estimate + 1.96*se, y = course_num, color = semester), height = .2) + 
+  scale_colour_manual(values = c("black", "grey")) +
+  geom_vline(xintercept = 0, lty = 2) +
+  scale_y_reverse(breaks = c(1,2,3,4,5,6,7,8), 
+                  labels = c(reordered.labels.for.graph, "All Courses")) +
+  # plotting meta-analytic effect
+  geom_polygon(data = pb_condition.effect.plothelp, 
+               aes(x = x.diamond, y = y.diamond), size = 0.1) +
+  scale_x_continuous(breaks = round(seq(
+    min(pb_condition.effect$estimate), 
+    max(pb_condition.effect$estimate), by = 1),0)) +
+  labs(color = "Term") +
+  xlab("Difference in Average Exam Score") + ylab("Course") + theme_bw() + 
+  theme(legend.position = "top",
+        legend.title = element_text(size=18),
+        legend.text = element_text(size=18),
+        axis.title = element_text(size=18),
+        axis.text.x = element_text(size=18),
+        axis.text.y = element_text(size=18))
+
+#1200x800
+overall.meta.graph
+```
+
+Note. Forest plot summarizing a meta-analysis of the effect of using the Exam Playbook on students’ averaged exam score. Data points represent the effect size for each class in each semester, with error bars representing 95% confidence intervals. The diamond in the last row represents the weighted meta-analytic effect size (Borenstein et al, 2010), and corresponds to a standardized effect size (Cohen’s d) of 
+`r report(pb_condition.effect.standardized.summary$TE.random)`. 
+
+### Metagen output
+
+```{r, message=F, echo=T, eval=T, class.output="bg-success"} 
+pb_condition.effect.summary
+```
+
+
+## 1.2 Robustness Checks {.tabset}
+
+Two robustness checks further validated these results: 
+
+### Checks:
+
+### 1: Controlling for plausible confounders
+
+```{r calculate-playbook-effect-controlling-for-college-entrance-scores, echo=T, eval=T, class.output="bg-success"}
+
+pb_condition.effect.act <- data.frame(
+  estimate = rep(NA, length(unique(user.lvl$course_semester))),
+  se = rep(NA, length(unique(user.lvl$course_semester))),
+  course_semester = unique(user.lvl$course_semester),
+  standardized_estimate = rep(NA, length(unique(user.lvl$course_semester))),
+  standardized_se = rep(NA, length(unique(user.lvl$course_semester)))
+)
+
+for (i in 1:length(unique(user.lvl$course_semester))){ # regress by class
+  this_course_semester = pb_condition.effect$course_semester[i]
+  
+  model.temp <- user.lvl %>%
+    filter(course_semester == this_course_semester) %>%
+    lm(exam_score_avrg ~ pb_condition + act_convtd, data = .) %>%
+    summary()
+  
+  pb_condition.effect.act$estimate[i] <- 
+    model.temp$coefficients["pb_conditionplaybook", "Estimate"]
+  pb_condition.effect.act$se[i] <- 
+    model.temp$coefficients["pb_conditionplaybook", "Std. Error"]
+  
+  model.temp.standardized <- user.lvl %>% 
+    filter(course_semester == this_course_semester) %>%
+    lm(exam_score_avrg_standardized ~ pb_condition + act_convtd, data = .) %>% 
+    summary()
+  
+  pb_condition.effect.act$standardized_estimate[i] <- 
+    model.temp.standardized$coefficients["pb_conditionplaybook", "Estimate"]
+  pb_condition.effect.act$standardized_se[i] <- 
+    model.temp.standardized$coefficients["pb_conditionplaybook", "Std. Error"]
+}
+
+pb_condition.effect.act <- pb_condition.effect.act %>%
+  arrange(course_semester) %>% # arrange by course semester
+  mutate(
+    course = rep(ORDERED.LABELS, each=2),
+    semester = rep(c("Fall", "Winter"), 7 ),
+    course_num = COURSE_NUM_VECTOR
+  )
+
+pb_condition.effect.act.summary <- metagen(pb_condition.effect.act$estimate,
+                                           pb_condition.effect.act$se)
+
+pb_condition.effect.act.standardized.summary <-
+  metagen(pb_condition.effect.act$standardized_estimate, 
+          pb_condition.effect.act$standardized_se) 
+# look at "random effects model" of metagen output, coefficient = 0.1382 = 0.14
+
+pb_condition.effect.act.summary
+```
+
+One, controlling for students’ college entrance exam scores as a covariate (students in our sample were mostly freshmen who did not yet have college GPA), the overall meta-analytic trend remained consistent: Exam Playbook users scored an average of 
+`r report(pb_condition.effect.act.summary$TE.random)` 
+(`r report.ci(pb_condition.effect.act.summary$TE.random, pb_condition.effect.act.summary$seTE.random)`, 
+Cohen's d = `r report(pb_condition.effect.act.standardized.summary$TE.random)`,
+p `r report.p(pb_condition.effect.act.summary$pval.random)`)
+percentage points higher than non-users on their average exam score. We tested demographic factors (gender, race/ethnicity and first-generation status) as potential moderators later in the Results. 
+
+
+
+```{r NOT-RUN-plotting-forest-plot-control-college-entrance-scores, fig.width=10, fig.height=6, echo=F, eval=F}
+
+# NOT RUN for paper
+
+pb_condition.effect.act.plothelp <- data.frame(
+  
+  "x.diamond" = c(pb_condition.effect.act.summary$TE.random - 1.96*pb_condition.effect.act.summary$seTE.random,
+                  pb_condition.effect.act.summary$TE.random,
+                  pb_condition.effect.act.summary$TE.random + 1.96*pb_condition.effect.act.summary$seTE.random,
+                  pb_condition.effect.act.summary$TE.random),
+  "y.diamond" = c(8,
+                  8 + 0.2, 
+                  8,
+                  8 - 0.2)
+)
+
+## re-ordering based on raw effect size
+
+# 1  General Physics	                0.1234743		
+# 2  General Chemistry	              0.7419212		
+# 3  Introductory Biology	            1.3172378		
+# 4  Introductory Programming (Engin)	1.6031804		
+# 5  Introductory Economics	          1.7309801		
+# 6  Elementary Programming	          2.8814635		
+# 7  Introduction to Statistics	      5.9574770	
+
+pb_condition.effect.act.reorder.by.es <- pb_condition.effect.act %>% arrange(factor(course, levels= c("General Physics", "General Chemistry", "Introductory Biology", "Introductory Programming (Engin)", "Introductory Economics", "Elementary Programming", "Introduction to Statistics")), semester) %>% mutate(course_num = COURSE_NUM_VECTOR)
+reordered.labels.for.graph = c("General Physics", "General Chemistry", "Intro Biology", "Intro Programming (Engineers)", "Intro Economics","Intro Programming (Programmers)", "Intro Statistics")
+
+
+overall.meta.graph.act <- ggplot(pb_condition.effect.act.reorder.by.es) +
+  geom_point(aes(x=estimate, y = course_num, color = semester), size=3) + 
+  geom_errorbarh(aes(x=estimate, xmin=estimate - 1.96*se, xmax=estimate + 1.96*se, y=course_num, color = semester), height=.2) + 
+  scale_colour_manual(values = c("black", "grey")) +
+  geom_vline(xintercept=0, lty=2) +
+  scale_y_reverse(breaks=c(1,2,3,4,5,6,7,8), labels=c(reordered.labels.for.graph, "All Courses")) + # labels=c(ordered.labels, "All Courses")) +
+  geom_polygon(data = pb_condition.effect.act.plothelp, aes(x = x.diamond, y = y.diamond), size = 0.1)+
+  scale_x_continuous(breaks = round(seq(min(pb_condition.effect.act$estimate), max(pb_condition.effect.act$estimate), by = 1),0)) +
+  labs(color = "Term") +
+    xlab("Difference in Average Exam Score") +
+  ylab("Course") +
+  theme_bw() + 
+  theme(legend.position = "top",
+        legend.title = element_text(size=18),
+        legend.text = element_text(size=18),
+        axis.title = element_text(size=18),
+        axis.text.x = element_text(size=18),
+        axis.text.y = element_text(size=18))
+
+overall.meta.graph.act
+
+```
+
+
+### 2: Exam Level Analysis 
+
+
+```{r calculate-playbook-effect-exam-level, echo=T, eval=T}
+meta_by_class <- NULL
+
+for (i in 1:length(unique(exam.lvl$course_semester))){ # for each class
+  this_course_semester = pb_condition.effect$course_semester[i]
+  temp.class <- exam.lvl %>% filter(course_semester == this_course_semester)
+  
+  # initialising
+  exam.lvl.effect <- data.frame(
+    estimate = rep(NA, length(unique(temp.class$exam_key))),
+    se = rep(NA, length(unique(temp.class$exam_key))),
+    standardized_estimate = rep(NA, length(unique(temp.class$exam_key))),
+    standardized_se = rep(NA, length(unique(temp.class$exam_key)))
+  )
+  
+  for (j in 1:length(unique(temp.class$exam_key))){ # for each exam
+    this_exam_key = temp.class$exam_key[j]
+    
+    temp.summary <- temp.class %>% 
+      filter(exam_key == this_exam_key) %>% 
+      lm(exam_score ~ pb_use, data = .) %>% 
+      summary()
+    
+    exam.lvl.effect$estimate[j] <- temp.summary$coefficients["pb_use", "Estimate"]
+    exam.lvl.effect$se[j] <- temp.summary$coefficients["pb_use", "Std. Error"]
+    
+    temp.summary.standardized <- temp.class %>% 
+      filter(exam_key == this_exam_key) %>% 
+      lm(exam_score_standardized ~ pb_use, data = .) %>% 
+      summary()
+    
+    exam.lvl.effect$standardized_estimate[j] <- 
+      temp.summary.standardized$coefficients["pb_use", "Estimate"]
+    exam.lvl.effect$standardized_se[j] <- 
+      temp.summary.standardized$coefficients["pb_use", "Std. Error"]
+  }
+  
+  
+  exam.effect <- metagen(exam.lvl.effect$estimate, exam.lvl.effect$se)
+  exam.effect.standardized <- metagen(exam.lvl.effect$standardized_estimate,
+                                      exam.lvl.effect$standardized_se)
+  
+  meta_by_class <- rbind(meta_by_class, 
+      data.frame(
+        estimate = exam.effect$TE.fixed, 
+        # fixed effects assumed within same class, but random across classes (later)
+        se = exam.effect$seTE.fixed,
+        course_semester = unique(exam.lvl$course_semester)[i],
+        standardized_estimate = exam.effect.standardized$TE.fixed,
+        standardized_se = exam.effect.standardized$seTE.fixed
+      ))
+  
+}
+
+meta_by_class <- meta_by_class %>%
+  arrange(course_semester) %>%
+  mutate(
+    course = rep(ORDERED.LABELS, each=2),
+    semester = rep(c("Fall", "Winter"), 7 ),
+    course_num = COURSE_NUM_VECTOR
+  )
+
+# overall meta analysis effect
+pb_exam.effect <- metagen(meta_by_class$estimate, meta_by_class$se)
+
+pb_exam.effect.standardized <- metagen(meta_by_class$standardized_estimate,
+                                       meta_by_class$standardized_se)
+
+pb_exam.effect
+```
+
+
+
+Two, to supplement our class-level analyses, our results held when we examined Exam Playbook use on performance at the exam-level within class. A mixed-effects meta-analysis (with exam as a fixed effect and class as a random effect) across all 40 exams observed showed that students who used the Exam Playbook on a given exam scored an average of 
+`r report(pb_exam.effect$TE.random)` 
+(`r report.ci(pb_exam.effect$TE.random, pb_exam.effect$seTE.random)`, 
+Cohen's d = `r report(pb_exam.effect.standardized$TE.random)`,
+p `r report.p(pb_exam.effect$pval.random)`)
+percentage points higher than students who did not use the Exam Playbook on a given exam. 
+
+
+
+```{r NOT-RUN-plotting-forest-plot-exam-level, echo=F, eval=F}
+# NOT RUN for paper
+
+pb_exam.effect.plothelp <- data.frame(
+  "x.diamond" = c(pb_exam.effect$TE.random - 1.96*pb_exam.effect$seTE.random,
+                  pb_exam.effect$TE.random,
+                  pb_exam.effect$TE.random + 1.96*pb_exam.effect$seTE.random,
+                  pb_exam.effect$TE.random),
+  "y.diamond" = c(8,
+                  8 + 0.2, # can change this 0.1 to make the diamond less fat.
+                  8,
+                  8 - 0.2)
+  
+)
+
+### --- %%% re-ordering based on effect size
+
+pb_exam.effect.reorder.by.es <- meta_by_class %>% arrange(factor(course, levels= c("General Physics", "General Chemistry","Introductory Biology", "Introductory Programming (Engin)","Introductory Economics", "Elementary Programming",  "Introduction to Statistics")), semester) %>% mutate(course_num = COURSE_NUM_VECTOR)
+reordered.labels.for.graph = c("General Physics", "General Chemistry","Introductory Biology", "Introductory Programming (Engin)",  "Elementary Programming","Introductory Economics",  "Introduction to Statistics")
+### --- %%%
+
+overall.meta.graph.exam <- ggplot(pb_exam.effect.reorder.by.es) + 
+  geom_point(aes(x=estimate, y = course_num, color = semester)) + 
+  geom_errorbarh(aes(xmin=estimate - 1.96*se, xmax=estimate + 1.96*se, y=course_num, color = semester), height=.1) + 
+  scale_colour_manual(values = c("black", "grey")) +
+  geom_vline(xintercept=0, lty=2) +
+  scale_y_reverse(breaks=c(1,2,3,4,5,6,7,8),  labels=c(reordered.labels.for.graph, "All Courses")) +
+  geom_polygon(data = pb_exam.effect.plothelp, aes(x = x.diamond, y = y.diamond), size = 0.1)+
+  scale_x_continuous(breaks = round(seq(min(pb_exam.effect.reorder.by.es$estimate), max(pb_exam.effect.reorder.by.es$estimate), by = 1),0)) +
+  labs(color = "Term") +
+    xlab("Difference in Average Exam Score") +
+  ylab("Course") +
+  theme_bw()
+
+overall.meta.graph.exam
+
+```
+
+
+
+
+# 2 Under What Class Conditions Might the Exam Playbook be More or Less Effective?
+
+As shown in Figure 1, there was substantial heterogeneity in the estimated effect size of using the Exam Playbook across different classes. The average effect size was largest in the Introductory Statistics course (
+`r report((pb_condition.effect %>% filter(course == "Introduction to Statistics", semester == "Fall"))$estimate)`
+percentage points in Fall and 
+`r report((pb_condition.effect %>% filter(course == "Introduction to Statistics", semester == "Winter"))$estimate)`
+in Winter), which was the exact course for which the original intervention was designed and experimentally tested (Chen et al., 2017). Thus, this serves as an assessment of the <i>effectiveness</i> of the intervention when made freely available within the same class context (c.f. an RCT-based efficacy effect size of 3.64 and 4.21 percentage points in two studies in Chen et al, 2017). 
+
+
+
+```{r without-statistics-calculate-playbook-effect, message=F, echo=T, eval=T}
+### generalizability beyond intro stats
+user.lvl.nostats <- user.lvl %>% filter(!(course %in% c("Introduction to Statistics")))
+
+# initialising
+pb_condition.effect.nostats <- data.frame(
+  estimate = rep(NA,length(unique(user.lvl.nostats$course_semester))),
+  se = rep(NA,length(unique(user.lvl.nostats$course_semester))),
+  course_semester = unique(user.lvl.nostats$course_semester),
+  standardized_estimate = rep(NA,length(unique(user.lvl.nostats$course_semester))),
+  standardized_se = rep(NA,length(unique(user.lvl.nostats$course_semester)))
+)
+pb_condition.effect.nostats.act = pb_condition.effect.nostats
+
+for (i in 1:length(unique(user.lvl.nostats$course_semester))){ # regress by class
+  this_course_semester = pb_condition.effect.nostats$course_semester[i]
+  
+  model.temp <- user.lvl.nostats %>% 
+    filter(course_semester == this_course_semester) %>%
+    lm(exam_score_avrg ~ pb_condition, data = .) %>% 
+    summary()
+  
+  pb_condition.effect.nostats$estimate[i] <- model.temp$coefficients[2, "Estimate"]
+  pb_condition.effect.nostats$se[i] <- model.temp$coefficients[2, "Std. Error"]
+  
+  model.temp.standardized <- user.lvl.nostats %>% 
+    filter(course_semester == this_course_semester) %>%
+    lm(exam_score_avrg_standardized ~ pb_condition, data = .) %>% 
+    summary()
+  
+  pb_condition.effect.nostats$standardized_estimate[i] <- 
+    model.temp.standardized$coefficients[2, "Estimate"]
+  pb_condition.effect.nostats$standardized_se[i] <- 
+    model.temp.standardized$coefficients[2, "Std. Error"]
+  
+  # controlling for covariates
+  model.temp.act <- user.lvl.nostats %>% 
+    filter(course_semester == this_course_semester) %>%
+    lm(exam_score_avrg ~ pb_condition + act_convtd, data = .) %>% 
+    summary()
+  
+  pb_condition.effect.nostats.act$estimate[i] <- model.temp.act$coefficients[2, "Estimate"]
+  pb_condition.effect.nostats.act$se[i] <- model.temp.act$coefficients[2, "Std. Error"]
+  
+  model.temp.act.standardized <- user.lvl.nostats %>% 
+    filter(course_semester == this_course_semester) %>%
+    lm(exam_score_avrg_standardized ~ pb_condition + act_convtd, data = .) %>% 
+    summary()
+  
+  pb_condition.effect.nostats.act$standardized_estimate[i] <- 
+    model.temp.act.standardized$coefficients[2, "Estimate"]
+  pb_condition.effect.nostats.act$standardized_se[i] <- 
+    model.temp.act.standardized$coefficients[2, "Std. Error"]
+  
+}
+
+pb_condition.effect.nostats <- pb_condition.effect.nostats %>%
+  arrange(course_semester) # arrange by course semester
+
+pb_condition.effect.nostats.summary <- metagen(pb_condition.effect.nostats$estimate,
+                                               pb_condition.effect.nostats$se)
+
+pb_condition.effect.nostats.standardized.summary <-
+  metagen(pb_condition.effect.nostats$standardized_estimate,
+          pb_condition.effect.nostats$standardized_se) 
+
+
+# controlling for covariates
+pb_condition.effect.nostats.act <- pb_condition.effect.nostats.act %>%
+  arrange(course_semester) # arrange by course semester
+
+pb_condition.effect.nostats.act.summary <- metagen(pb_condition.effect.nostats.act$estimate,
+                                               pb_condition.effect.nostats.act$se)
+
+pb_condition.effect.nostats.act.standardized.summary <-
+  metagen(pb_condition.effect.nostats.act$standardized_estimate,
+          pb_condition.effect.nostats.act$standardized_se) 
+```
+
+
+The other courses allow us to examine the generalization of the Exam Playbook to different class contexts. 
+As a conservative test of the generalizability of Exam Playbook use on exam performance beyond the Introductory Statistics course, we repeated our analyses using only the 6 other courses (12 classes total) excluding Introductory Statistics. 
+On average, using the Exam Playbook still conferred benefits to students in these courses. The meta-analytic effect size was smaller and still significant: students who used the Exam Playbook scored an average of 
+`r report(pb_condition.effect.nostats.summary$TE.random)` 
+(`r report.ci(pb_condition.effect.nostats.summary$TE.random, pb_condition.effect.nostats.summary$seTE.random)`, 
+d = `r report(pb_condition.effect.nostats.standardized.summary$TE.random)`, 
+p `r report.p(pb_condition.effect.nostats.summary$pval.random)`). 
+percentage points higher than non-users. When controlling for college entrance exam scores, we observed a 
+`r report(pb_condition.effect.nostats.act.summary$TE.random)` 
+percentage point difference
+(`r report.ci(pb_condition.effect.nostats.act.summary$TE.random, pb_condition.effect.nostats.act.summary$seTE.random)`, 
+d = `r report(pb_condition.effect.nostats.act.standardized.summary$TE.random)`, 
+p `r report.p(pb_condition.effect.nostats.act.summary$pval.random)`). 
+
+
+
+
+After Introductory Statistics, which had the highest use rates and effect sizes, students in the two Introductory Programming courses enjoyed the next-largest average benefits—
+`r report(mean((pb_condition.effect %>% filter(course %in% c("Introductory Programming (Engin)", "Elementary Programming")))$estimate))`
+percentage points averaged across both semesters and both programming courses (we note that the Introductory Economics course had substantial differences in effect sizes and uptake across Fall and Winter semesters). On the other end of the spectrum, the smallest average effect sizes from using the Exam Playbook were observed in the General Physics and General Chemistry courses (
+`r report(mean((pb_condition.effect %>% filter(course %in% c("General Physics")))$estimate))`
+percentage points averaged across both semesters for General Physics; 
+`r report(mean((pb_condition.effect %>% filter(course %in% c("General Chemistry")))$estimate))`
+percentage points for General Chemistry).
+
+
+One plausible reason for such heterogeneity at the class level could be how much the climate of the course supported such strategic resource use, including Exam Playbook-use. According to contemporary theorizing about psychological intervention effect heterogeneity, “change requires planting <i>good seeds</i> (more adaptive perspectives)… in <i>fertile soil</i> (a context with appropriate affordances)” (Walton & Yeager, 2020, emphasis ours). That is, perhaps the Exam Playbook was more useful to students who were in course climates more conducive to the psychology of the Exam Playbook.
+
+
+Two possible operationalizations of this course climate (at the class-level) are peers’ uptake of the Exam Playbook (Powers et al., 2016; Yeager et al., 2019) and teachers’ degree of support toward engaging in the Exam Playbook as a useful learning resource (Matz et al., 2021)–both of which reflect powerful social norms that could influence students’ engagement with and degree of benefit from the Exam Playbook (Bierman et al., 2010; Walton & Yeager, 2020; Yeager et al., 2019). 
+
+
+We fit two separate linear models using (a) the average Exam Playbook usage (by course) and (b) the quantifiable presence/absence of extra course credit offered for engaging in the Exam Playbook, to predict the effect size for each class. Instructors in 4 of the 7 courses (specifically Introductory Statistics, Introductory Biology, Introductory Programming (Programmers), and Introductory Programming (Engineers)) incentivized the use of the Exam Playbook by offering bonus credit to students' final course grade for using it. Importantly, however, these bonuses did not influence our main outcome measure: exam performance. 
+
+##  {.tabset}
+
+### Course Climate Variables: 
+
+### 1: Peer Norms of Exam Playbook usage
+
+```{r dosage-effect-at-course-level, echo=T, eval=T, class.output="bg-success"}
+## course level data
+course.lvl <- pb_condition.effect
+
+course.lvl <- course.lvl %>% left_join(
+  (user.lvl %>% group_by(course_semester) %>% 
+     summarize(pb_use_sum_gmc = mean(pb_use_sum), .groups="keep") %>% 
+     ungroup), by = "course_semester"
+)
+
+lm.model.dosage.sum <- summary(lm(estimate ~ pb_use_sum_gmc, data=course.lvl))
+
+lm.model.dosage.standardized.sum <- summary(lm(standardized_estimate ~ pb_use_sum_gmc, data=course.lvl))
+
+lm.model.dosage.sum
+```
+
+Indeed, the average Exam Playbook usage in a class (the peer norm) was positively associated with the effect size of using the Exam Playbook (b = 
+`r report(lm.model.dosage.sum$coefficients["pb_use_sum_gmc",1])` 
+`r report.ci(lm.model.dosage.sum$coefficients["pb_use_sum_gmc",1], lm.model.dosage.sum$coefficients["pb_use_sum_gmc",2])`, 
+d = `r report(lm.model.dosage.standardized.sum$coefficients["pb_use_sum_gmc",1])`, 
+p `r report.p(lm.model.dosage.sum$coefficients["pb_use_sum_gmc",4])`).
+
+
+
+### 2: Presence of class bonus
+
+```{r effect-of-class-bonus, echo=T, eval=T, class.output="bg-success"}
+bonus.data <- data.frame(
+  course_semester = c("Elementary Programming Fall",            
+                      "Elementary Programming Winter",
+                      "General Chemistry Fall",  
+                      "General Chemistry Winter", 
+                      "General Physics Fall",
+                      "General Physics Winter",
+                      "Introduction to Statistics Fall",
+                      "Introduction to Statistics Winter",
+                      "Introductory Biology Fall",
+                      "Introductory Biology Winter",
+                      "Introductory Economics Fall",
+                      "Introductory Economics Winter",
+                      "Introductory Programming (Engin) Fall",
+                      "Introductory Programming (Engin) Winter"),
+  bonus = c(1,1,
+          0,0,
+          0,1,
+          1,1,
+          0,1,
+          0,0,
+          1,1)
+)
+
+course.lvl <- course.lvl %>% left_join(bonus.data, by = "course_semester")
+
+lm.model.bonus.sum <- summary(lm(estimate~bonus, data = course.lvl))
+
+lm.model.bonus.standardized.sum <- summary(lm(standardized_estimate~bonus, data = course.lvl))
+
+lm.model.bonus.sum
+```
+
+Similarly, teacher support in the form of course credit incentives offered related to a larger effect size than when it was not offered (b = 
+`r report(lm.model.bonus.sum$coefficients["bonus",1])` 
+`r report.ci(lm.model.bonus.sum$coefficients["bonus",1], lm.model.bonus.sum$coefficients["bonus",2])`, 
+d = `r report(lm.model.bonus.standardized.sum$coefficients["bonus",1])`, 
+p `r report.p(lm.model.bonus.sum$coefficients["bonus",4])`).
+
+##
+
+<hr>
+
+Could differences in the extensiveness of resources provided or the kinds of resources most students selected to use (such as practice-based versus simple reading and memorization) have explained the variation in effect sizes across classes? Our data did not support either of these possibilities: the number of resources offered varied only slightly among classes (range: 11-15), and the types of resources that students selected the most for use were generally similar across classes (see Supplementary Note 2). Hence, we ruled out that that either of these factors strongly explained class-level heterogeneity.
+
+
+# 3 Intra-individual Changes in Exam Performance When Dropping vs. Adopting the Exam Playbook
+
+One difficulty of observational (effectiveness) studies, compared to experimental (efficacy) studies, is teasing apart the effects of confounding variables. Methods such as matching and difference-in-difference modelling try to control for these effects. We conducted two analyses based on matching, that examined how intra-individual variation in Exam Playbook usage tracked changes in academic performance. We matched students using their background and behavior in the initial portion of the class, and then examined how subsequent behavior tracked exam performance. 
+In these classes, there were natural variations in Exam Playbook usage. Some students started off not using the Exam Playbook, and picked up (or “adopted”) the Exam Playbook on later exams, while others used the Exam Playbook early on but dropped it later in the class (see Supplemental Table 2 for descriptives). These natural covariations allowed us to assess the average effect of "adopting" and "dropping" the Exam Playbook within individuals. If Exam Playbook usage benefits students' performance, we should expect their exam performance to covary with students' Exam Playbook usage patterns—with "adopting" and "dropping" associated with increased and decreased exam performance, respectively. 
+
+Using stratified matching (Austin, 2011), we matched these students on their initial exam performance (the first exam in the class), gender, race, first-generation status, and college entrance scores, and estimated the average effect of adopting and dropping the Exam Playbook on their subsequent exams. Because most of the activity of Exam Playbook usage within a class occurred within the first two exams of the class (94%), we restricted this analysis to only the first two exams of each class. Stratified matching analysis was performed for each class separately (13 classes) and we computed a meta-analytic estimate using a mixed-effects meta-analysis. 
+
+
+```{r preparing-data-for-matching-analyses, echo=T, eval=T}
+### extracting first two exams for intra-student analyses
+exam.lvl.match <- exam.lvl %>%
+  filter(exam_key %in% c("Exam 1", "Exam 2")) %>%
+  mutate(time = ifelse(exam_key == "Exam 1", 0, 1))
+
+playbk_use <- spread(exam.lvl[, c("user_source_id_sem", "pb_use", "exam_key")], key = exam_key, value = pb_use)
+
+colnames(playbk_use) <- c("user_source_id_sem","exam1_pbuse","exam2_pbuse","exam3_pbuse","exam4_pbuse")
+
+exam.lvl.match <- exam.lvl.match %>% 
+  left_join(playbk_use, by="user_source_id_sem") %>%
+  mutate(
+    dropped_pb = ifelse(exam1_pbuse == 1 & exam2_pbuse == 0, 1,0),
+    picked_up  = ifelse(exam1_pbuse == 0 & exam2_pbuse == 1, 1,0),
+    no.use     = ifelse(exam1_pbuse == 0 & exam2_pbuse == 0, 1,0),
+    all.use    = ifelse(exam1_pbuse == 1 & exam2_pbuse == 1, 1,0),
+    usage_pattern = factor(ifelse(dropped_pb == 1, "dropped",
+                                  ifelse(picked_up == 1, "adopted",
+                                         ifelse(no.use == 1, "never", 
+                                                ifelse(all.use == 1, "consistent", NA)))))
+  )
+```
+
+## {.tabset}
+
+### Matching Analyses: 
+
+### 1. Effect of Adopting Exam Playbook
+
+```{r stratified-matching-analysis-adoption-effect, echo=T, eval=T, class.output="bg-success"}
+exam.lvl.match.adopt <- exam.lvl.match %>% 
+  filter(first_use_exam1==0) %>%
+  mutate(usage_pattern = factor(usage_pattern, levels = c("never", "adopted")))
+
+match.adopt.df <- exam.lvl.match.adopt %>% 
+  select(user_source_id_sem, exam_key, course_semester, 
+         usage_pattern, exam_score, course, semester, 
+         gender, act_convtd, race, firstgen) %>%
+  group_by(exam_key, course_semester) %>%
+  mutate(class_mean_for_exam = mean(exam_score, na.rm =T),
+         class_sd_for_exam = sd(exam_score, na.rm =T),
+         exam_key = recode(exam_key, `Exam 1` = "E1", `Exam 2` = "E2")) %>%
+  pivot_wider(id_cols = c(user_source_id_sem, course_semester, usage_pattern),
+              names_from = exam_key, 
+              values_from = c(exam_score, class_mean_for_exam, class_sd_for_exam, 
+                              course, semester, gender, act_convtd, race, firstgen))
+
+match.adopt.meta.df = data.frame()
+
+for(course_name in unique(match.adopt.df$course_semester)) {
+  
+  course_data_full <- match.adopt.df %>% filter(course_semester == course_name)
+  
+  course_data <- na.omit(course_data_full)
+  #print(paste(nrow(course_data_full) - nrow(course_data), "observations were omitted in", course_name))
+  
+  if(course_name != "Introductory Economics Winter"){
+    propensity <- matchit(
+      factor(usage_pattern) ~ exam_score_E1 + gender_E1 + 
+        act_convtd_E1 + race_E1 + firstgen_E1,
+      data = course_data,
+      method = "subclass",
+      subclass = 5,
+      estimand = "ATE"
+    ) #one to one matching - each treated with one control
+    
+    matched_data <- match.data(propensity)
+    
+    fit1 <- lm(exam_score_E2 ~ factor(usage_pattern) + 
+                 exam_score_E1 + gender_E1 + act_convtd_E1 + 
+                 race_E1 + firstgen_E1, 
+               data = matched_data, weights = weights)
+    
+    match_result <- coeftest(fit1, vcov. = vcovCL, cluster = ~subclass)
+    
+    standardized_fit1 = lm( 
+      I((exam_score_E2-class_mean_for_exam_E2)/class_sd_for_exam_E2) ~ 
+        factor(usage_pattern) + exam_score_E1 + gender_E1 + act_convtd_E1 + 
+        race_E1 + firstgen_E1, data = matched_data, weights = weights)
+    match_standardized_result = coeftest(standardized_fit1, 
+                                         vcov. = vcovCL, cluster = ~subclass)
+  }
+  
+  # get class total
+  class_total <- user.lvl %>% filter(course_semester == course_name)
+  
+  if(course_name != "Introductory Economics Winter"){
+    match.adopt.meta.df = rbind(match.adopt.meta.df, 
+                                data.frame(course_semester = course_name,
+                                           course = course_data$course_E1[1],
+                                           semester = course_data$semester_E1[1],
+                                           estimate = match_result[2,1],
+                                           se = match_result[2,2],
+                                           num = nrow(matched_data),
+                                           total = nrow(class_total),
+                                           standardized_estimate = match_standardized_result[2,1],
+                                           standardized_se = match_standardized_result[2,2]
+                                ))
+  } else {
+    match.adopt.meta.df = rbind(match.adopt.meta.df, 
+                                data.frame(course_semester = course_name,
+                                           course = course_data$course_E1[1],
+                                           semester = course_data$semester_E1[1],
+                                           estimate = NA,
+                                           se = NA,
+                                           num = NA,
+                                           total = NA,
+                                           standardized_estimate = NA,
+                                           standardized_se = NA
+                                ))
+  }
+}
+
+
+match.adopt.meta.df.summary <- metagen(match.adopt.meta.df$estimate, 
+                                       match.adopt.meta.df$se)
+
+match.adopt.meta.df.standardized.summary <- 
+  metagen(match.adopt.meta.df$standardized_estimate, 
+          match.adopt.meta.df$standardized_se)
+
+match.adopt.meta.df.summary
+```
+
+To estimate the average effect of adopting the Exam Playbook, we took the subset of students who did not use the Exam Playbook on their first exam. Of these, some students adopted the Exam Playbook on their second exam, while others did not. When matched on their first exam performance, college entrance scores, and demographics, students who adopted the Exam Playbook performed an average of 
+`r report(match.adopt.meta.df.summary$TE.random)`
+percentage points 
+(`r report.ci(match.adopt.meta.df.summary$TE.random, match.adopt.meta.df.summary$seTE.random)`, 
+d = `r report(match.adopt.meta.df.standardized.summary$TE.random)`, 
+p `r report.p(match.adopt.meta.df.summary$pval.random)`)
+better on the second exam, compared to those who never used it (Figure 2 left panel). 
+
+```{r plot-stratified-matching-analysis-adoption-effect, echo=T, eval=T, fig.width=9, fig.height=7}
+# keep the same ordering as the course-level forest plot graph
+
+match.adopt.meta.df.reorder <- match.adopt.meta.df %>% 
+  arrange(factor(course, levels= c("General Physics", "General Chemistry", 
+                                   "Introductory Biology", "Introductory Programming (Engin)", 
+                                   "Introductory Economics", "Elementary Programming",
+                                   "Introduction to Statistics")), semester) %>% 
+  mutate(course_num = COURSE_NUM_VECTOR)
+
+#reordered.labels.for.graph = c("General Physics", "General Chemistry", "Intro Biology", "Intro Programming (Engineers)", "Intro Economics", "Intro Programming (Programmers)", "Intro Statistics")
+### --- %%%
+
+match.adopt.meta.df.plothelp <- data.frame(
+  x.diamond = c(
+    match.adopt.meta.df.summary$TE.random - 1.96*match.adopt.meta.df.summary$seTE.random,
+    match.adopt.meta.df.summary$TE.random,
+    match.adopt.meta.df.summary$TE.random + 1.96*match.adopt.meta.df.summary$seTE.random,
+    match.adopt.meta.df.summary$TE.random),
+  y.diamond = c(8,
+                8 + 0.2, # can change this 0.1 to make the diamond less fat.
+                8,
+                8 - 0.2)
+)
+
+reordered.labels.with.n = c(
+  "General Physics", 
+  "General Chemistry",
+  "Intro Biology", 
+  "Intro Programming (Engineers)", 
+  "Intro Economics",
+  "Intro Programming (Programmers)",
+  "Intro Statistics"
+  )
+
+sample.labels.adopt = c(
+  paste(match.adopt.meta.df.reorder$num[1], " (",
+        format(match.adopt.meta.df.reorder$num[1]/match.adopt.meta.df.reorder$total[1]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[2], " (",
+        format(match.adopt.meta.df.reorder$num[2]/match.adopt.meta.df.reorder$total[2]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[3], " (",
+        format(match.adopt.meta.df.reorder$num[3]/match.adopt.meta.df.reorder$total[3]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[4], " (",
+        format(match.adopt.meta.df.reorder$num[4]/match.adopt.meta.df.reorder$total[4]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[5], " (",
+        format(match.adopt.meta.df.reorder$num[5]/match.adopt.meta.df.reorder$total[5]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[6], " (",
+        format(match.adopt.meta.df.reorder$num[6]/match.adopt.meta.df.reorder$total[6]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[7], " (",
+        format(match.adopt.meta.df.reorder$num[7]/match.adopt.meta.df.reorder$total[7]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[8], " (",
+        format(match.adopt.meta.df.reorder$num[8]/match.adopt.meta.df.reorder$total[8]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[9], " (",
+        format(match.adopt.meta.df.reorder$num[9]/match.adopt.meta.df.reorder$total[9]*100, digits=3), "%), ", 
+        sep=""),
+  "NA",
+  paste(match.adopt.meta.df.reorder$num[11], " (",
+        format(match.adopt.meta.df.reorder$num[11]/match.adopt.meta.df.reorder$total[11]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[12], " (",
+        format(match.adopt.meta.df.reorder$num[12]/match.adopt.meta.df.reorder$total[12]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.adopt.meta.df.reorder$num[13], " (",
+        format(match.adopt.meta.df.reorder$num[13]/match.adopt.meta.df.reorder$total[13]*100, digits=3), "%), ",
+        sep=""), 
+  paste(match.adopt.meta.df.reorder$num[14], " (",
+        format(match.adopt.meta.df.reorder$num[14]/match.adopt.meta.df.reorder$total[14]*100, digits=3), "%) ",
+        sep="")
+  )
+
+matching.plot.adopt <- ggplot(match.adopt.meta.df.reorder) + 
+  geom_point(aes(x = estimate, y = course_num, color = semester), size=3.5) + 
+  geom_errorbarh(aes(xmin=estimate - 1.96*se, xmax=estimate + 1.96*se, 
+                     y = course_num, color = semester), height=.2) + 
+  scale_colour_manual(values = c("black", "grey")) +
+  geom_vline(xintercept=0, lty=2) +
+  scale_x_continuous(breaks = round(seq(-10, 10, by = 5),0)) +
+  scale_y_reverse(breaks=c(1,2,3,4,5,6,7,8), labels=c(reordered.labels.with.n, "All Courses")) +
+  geom_polygon(data = match.adopt.meta.df.plothelp, aes(x = x.diamond, y = y.diamond), size = 0.1) +
+  #scale_x_continuous(breaks = round(seq(min(pb_condition.effect$estimate), max(pb_condition.effect$estimate), by = 1),0)) +
+  labs(color = "Term") +
+  #ggtitle("Effect of adopting the Exam Playbook") +
+  xlab("Adoption effect size \n (percentage points on Exam 2)") +
+  ylab("Course") +
+  theme_bw() + 
+  theme(legend.position = "top",
+        legend.title = element_text(size=18),
+        legend.text = element_text(size=18),
+        axis.title = element_text(size=18),
+        axis.text.x = element_text(size=18),
+        axis.text.y = element_text(size=18))+
+  annotate("text", x = -33, y = 1.3, label = sample.labels.adopt[1], size = 5, color ="black")  +
+    annotate("text", x = -23, y = 1.3, label = sample.labels.adopt[2], size = 5, color = "dark grey")  +
+  annotate("text", x = -33, y = 2.3, label = sample.labels.adopt[3], size = 5, color ="black")  +
+    annotate("text", x = -23, y = 2.3, label = sample.labels.adopt[4], size = 5, color = "dark grey")  +
+  annotate("text", x = -33, y = 3.3, label = sample.labels.adopt[5], size = 5, color ="black")  +
+    annotate("text", x = -23, y = 3.3, label = sample.labels.adopt[6], size = 5, color = "dark grey")  +
+  annotate("text", x = -33, y = 4.3, label = sample.labels.adopt[7], size = 5, color ="black")  +
+    annotate("text", x = -23, y = 4.3, label = sample.labels.adopt[8], size = 5, color = "dark grey")  +
+  annotate("text", x = -33, y = 5.3, label = sample.labels.adopt[9], size = 5, color ="black")  +
+    annotate("text", x = -23, y = 5.3, label = sample.labels.adopt[10], size = 5, color = "dark grey")  +
+  annotate("text", x = -33, y = 6.3, label = sample.labels.adopt[11], size = 5, color ="black")  +
+    annotate("text", x = -23, y = 6.3, label = sample.labels.adopt[12], size = 5, color = "dark grey")  +
+  annotate("text", x = -33, y = 7.3, label = sample.labels.adopt[13], size = 5, color ="black")  +
+    annotate("text", x = -23, y = 7.3, label = sample.labels.adopt[14], size = 5, color = "dark grey")  +
+  coord_cartesian(xlim = c(-16, 16), clip = "off") 
+#  theme(text = element_text(size=25))
+# 8.5 by 7, pdf
+
+# matching.plot.adopt
+
+```
+
+
+
+
+### 2. Effect of Dropping Exam Playbook
+
+
+```{r stratified-matching-analysis-dropping-effect, echo=T, eval=T, class.output="bg-success"}
+
+exam.lvl.match.drop <- exam.lvl.match %>% filter(exam1_pbuse == 1)
+
+match.drop.df <- exam.lvl.match.drop %>% 
+  select(user_source_id_sem, exam_key, course_semester, 
+         usage_pattern, exam_score, course, semester, 
+         gender, act_convtd, race, firstgen) %>%
+  group_by(exam_key, course_semester) %>%
+  mutate(class_mean_for_exam = mean(exam_score, na.rm =T),
+         class_sd_for_exam = sd(exam_score, na.rm =T),
+         exam_key = recode(exam_key, `Exam 1` = "E1", `Exam 2` = "E2")) %>%
+  pivot_wider(id_cols = c(user_source_id_sem, course_semester, usage_pattern),
+              names_from = exam_key, 
+              values_from = c(exam_score, class_mean_for_exam, class_sd_for_exam, course, semester, gender, act_convtd, race, firstgen))
+
+match.drop.meta.df = data.frame()
+
+for(course_name in unique(match.drop.df$course_semester)) {
+  
+  course_data_full <- match.drop.df %>% filter(course_semester == course_name)
+  
+  course_data <- na.omit(course_data_full)
+  #print(paste(nrow(course_data_full) - nrow(course_data), "observations were omitted in", course_name))
+  
+  if(course_name != "Introductory Economics Winter"){
+      propensity <- matchit(
+        factor(usage_pattern) ~ exam_score_E1 + gender_E1 + 
+          act_convtd_E1 + race_E1 + firstgen_E1, 
+        data = course_data,
+        method = "subclass",
+        subclass = 5,
+        estimand = "ATE"
+      ) #one to one matching - each treated with one control
+      
+      matched_data <- match.data(propensity)
+      
+      fit1 <- lm(exam_score_E2 ~ factor(usage_pattern) + 
+                   exam_score_E1 + gender_E1 + act_convtd_E1 + 
+                   race_E1 + firstgen_E1, data = matched_data, weights = weights)
+      
+      match_result <- coeftest(fit1, vcov. = vcovCL, cluster = ~subclass)
+      
+      standardized_fit1 = lm( 
+        I((exam_score_E2-class_mean_for_exam_E2)/class_sd_for_exam_E2) ~ 
+          factor(usage_pattern) + exam_score_E1 + gender_E1 + act_convtd_E1 + 
+          race_E1 + firstgen_E1, data = matched_data, weights = weights)
+      match_standardized_result = coeftest(standardized_fit1, 
+                                           vcov. = vcovCL, cluster = ~subclass)
+  }
+  
+  # get class total
+  class_total <- user.lvl %>% filter(course_semester == course_name)
+  
+  if(course_name != "Introductory Economics Winter"){
+    match.drop.meta.df = rbind(match.drop.meta.df, 
+                               data.frame(course_semester = course_name,
+                                          course = course_data$course_E1[1],
+                                          semester = course_data$semester_E1[1],
+                                          estimate = match_result[2,1],
+                                          se = match_result[2,2],
+                                          num = nrow(matched_data),
+                                          total = nrow(class_total),
+                                          standardized_estimate = match_standardized_result[2,1],
+                                          standardized_se = match_standardized_result[2,2]
+                               ))
+  }else{
+    match.drop.meta.df = rbind(match.drop.meta.df, 
+                               data.frame(course_semester = course_name,
+                                          course = course_data$course_E1[1],
+                                          semester = course_data$semester_E1[1],
+                                          estimate = NA,
+                                          se = NA,
+                                          num = NA,
+                                          total = NA,
+                                          standardized_estimate = NA,
+                                          standardized_se = NA
+                               ))
+  }
+}
+
+
+match.drop.meta.df.summary <- metagen(match.drop.meta.df$estimate, 
+                                      match.drop.meta.df$se)
+
+match.drop.meta.df.standardized.summary <- 
+  metagen(match.drop.meta.df$standardized_estimate, 
+          match.drop.meta.df$standardized_se)
+
+match.drop.meta.df.summary
+```
+
+
+
+To estimate the effect of dropping the Exam Playbook, we repeated this analysis on the subset of students who had used the Exam Playbook for their first exam. Of these students, some dropped the Exam Playbook on their second exam, while others continued using it. When matched on their first exam performance, college entrance scores, and demographics, students who dropped the Exam Playbook performed an average of 
+`r report(match.drop.meta.df.summary$TE.random)`
+percentage points 
+(`r report.ci(match.drop.meta.df.summary$TE.random, match.drop.meta.df.summary$seTE.random)`, 
+d = `r report(match.drop.meta.df.standardized.summary$TE.random)`,
+p `r report.p(match.drop.meta.df.summary$pval.random)`)
+worse, compared to those who kept using it (Figure 2 right panel). 
+
+
+
+
+
+```{r plot-stratified-matching-analysis-dropping-effect, echo=T, eval=T, fig.width=9, fig.height=7}
+# keep the same ordering as the course-level forest plot graph
+
+match.drop.meta.df.reorder <- match.drop.meta.df %>% 
+  arrange(factor(course, levels= c("General Physics", "General Chemistry",  "Introductory Biology", "Introductory Programming (Engin)", 
+                                   "Introductory Economics","Elementary Programming", "Introduction to Statistics")), semester) %>% 
+  mutate(course_num = COURSE_NUM_VECTOR)
+
+### --- %%%
+match.drop.meta.df.plothelp <- data.frame(
+  x.diamond = c(match.drop.meta.df.summary$TE.random - 1.96*match.drop.meta.df.summary$seTE.random,
+                match.drop.meta.df.summary$TE.random,
+                match.drop.meta.df.summary$TE.random + 1.96*match.drop.meta.df.summary$seTE.random,
+                match.drop.meta.df.summary$TE.random),
+  y.diamond = c(8,
+                8 + 0.2, # can change this 0.1 to make the diamond less fat.
+                8,
+                8 - 0.2)
+)
+
+
+reordered.labels.with.n = c(
+  "General Physics", 
+  "General Chemistry",
+  "Intro Biology", 
+  "Intro Programming (Engineers)", 
+  "Intro Economics",
+  "Intro Programming (Programmers)",
+  "Intro Statistics"
+  )
+
+sample.labels.drop = c(
+  paste(match.drop.meta.df.reorder$num[1], " (",
+        format(match.drop.meta.df.reorder$num[1]/match.drop.meta.df.reorder$total[1]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[2], " (",
+        format(match.drop.meta.df.reorder$num[2]/match.drop.meta.df.reorder$total[2]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[3], " (",
+        format(match.drop.meta.df.reorder$num[3]/match.drop.meta.df.reorder$total[3]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[4], " (",
+        format(match.drop.meta.df.reorder$num[4]/match.drop.meta.df.reorder$total[4]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[5], " (",
+        format(match.drop.meta.df.reorder$num[5]/match.drop.meta.df.reorder$total[5]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[6], " (",
+        format(match.drop.meta.df.reorder$num[6]/match.drop.meta.df.reorder$total[6]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[7], " (",
+        format(match.drop.meta.df.reorder$num[7]/match.drop.meta.df.reorder$total[7]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[8], " (",
+        format(match.drop.meta.df.reorder$num[8]/match.drop.meta.df.reorder$total[8]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[9], " (",
+        format(match.drop.meta.df.reorder$num[9]/match.drop.meta.df.reorder$total[9]*100, digits=3), "%), ", 
+        sep=""),
+  "NA",
+  paste(match.drop.meta.df.reorder$num[11], " (",
+        format(match.drop.meta.df.reorder$num[11]/match.drop.meta.df.reorder$total[11]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[12], " (",
+        format(match.drop.meta.df.reorder$num[12]/match.drop.meta.df.reorder$total[12]*100, digits=3), "%) ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[13], " (",
+        format(match.drop.meta.df.reorder$num[13]/match.drop.meta.df.reorder$total[13]*100, digits=3), "%), ",
+        sep=""),
+  paste(match.drop.meta.df.reorder$num[14], " (",
+        format(match.drop.meta.df.reorder$num[14]/match.drop.meta.df.reorder$total[14]*100, digits=3), "%) ",
+        sep="")
+  )
+
+
+matching.plot.drop.right <- ggplot(match.drop.meta.df.reorder) + #ggplot(pb_condition.effect) + 
+  geom_point(aes(x=estimate, y = course_num, color = semester), size=3.5) + 
+  geom_errorbarh(aes(xmin=estimate - 1.96*se, xmax=estimate + 1.96*se, y=course_num, color = semester), height=.2) + 
+  scale_colour_manual(values = c("black", "grey")) +
+  geom_vline(xintercept=0, lty=2) +
+  scale_y_reverse(breaks=c(1,2,3,4,5,6,7,8), labels=c(reordered.labels.with.n, "All Courses"), position = "right") + 
+  geom_polygon(data = match.drop.meta.df.plothelp, aes(x = x.diamond, y = y.diamond), size = 0.1) +
+  scale_x_continuous(breaks = round(seq(-10, 10, by = 5),0)) +
+  labs(color = "Term") +
+  #ggtitle("Effect of adopting the Exam Playbook") +
+  xlab("Dropping effect size \n (percentage points on Exam 2)") +
+  ylab("") +
+  theme_bw() + 
+  theme(legend.position = "top",
+        legend.title = element_text(size=18),
+        legend.text = element_text(size=18),
+        axis.title = element_text(size=18),
+        axis.text.x = element_text(size=18),
+        axis.text.y = element_text(size=18))+
+  annotate("text", x = 23, y = 1.3, label = sample.labels.drop[1], size = 5, color ="black")  +
+    annotate("text", x = 33, y = 1.3, label = sample.labels.drop[2], size = 5, color = "dark grey")  +
+  annotate("text", x = 23, y = 2.3, label = sample.labels.drop[3], size = 5, color ="black")  +
+    annotate("text", x = 33, y = 2.3, label = sample.labels.drop[4], size = 5, color = "dark grey")  +
+  annotate("text", x = 23, y = 3.3, label = sample.labels.drop[5], size = 5, color ="black")  +
+    annotate("text", x = 33, y = 3.3, label = sample.labels.drop[6], size = 5, color = "dark grey")  +
+  annotate("text", x = 23, y = 4.3, label = sample.labels.drop[7], size = 5, color ="black")  +
+    annotate("text", x = 33, y = 4.3, label = sample.labels.drop[8], size = 5, color = "dark grey")  +
+  annotate("text", x = 23, y = 5.3, label = sample.labels.drop[9], size = 5, color ="black")  +
+    annotate("text", x = 33, y = 5.3, label = sample.labels.drop[10], size = 5, color = "dark grey")  +
+  annotate("text", x = 23, y = 6.3, label = sample.labels.drop[11], size = 5, color ="black")  +
+    annotate("text", x = 33, y = 6.3, label = sample.labels.drop[12], size = 5, color = "dark grey")  +
+  annotate("text", x = 23, y = 7.3, label = sample.labels.drop[13], size = 5, color ="black")  +
+    annotate("text", x = 33, y = 7.3, label = sample.labels.drop[14], size = 5, color = "dark grey")  +
+  coord_cartesian(xlim = c(-16, 16), clip = "off") 
+#  theme(text = element_text(size=25))
+# 8.5 by 7, pdf
+
+#matching.plot.drop.right
+
+```
+
+
+
+
+### Repeating without intro statistics
+
+```{r without-statistics-preparing-data-for-matching-analyses, echo=T, eval=T}
+### extracting first two exams for intra-student analyses
+exam.lvl.nostats <- exam.lvl %>%
+  filter(!(course %in% c("Introduction to Statistics")))
+
+exam.lvl.match.nostats <- exam.lvl.nostats %>%
+  filter(exam_key %in% c("Exam 1", "Exam 2")) %>%
+  mutate(time = ifelse(exam_key == "Exam 1", 0, 1))
+
+playbk_use.nostats <- spread(exam.lvl.nostats[, c("user_source_id_sem", "pb_use", "exam_key")], key = exam_key, value = pb_use)
+
+colnames(playbk_use.nostats) <- c("user_source_id_sem","exam1_pbuse","exam2_pbuse","exam3_pbuse","exam4_pbuse")
+
+exam.lvl.match.nostats <- exam.lvl.match.nostats %>% 
+  left_join(playbk_use.nostats, by="user_source_id_sem") %>%
+  mutate(
+    dropped_pb = ifelse(exam1_pbuse == 1 & exam2_pbuse == 0, 1,0),
+    picked_up  = ifelse(exam1_pbuse == 0 & exam2_pbuse == 1, 1,0),
+    no.use     = ifelse(exam1_pbuse == 0 & exam2_pbuse == 0, 1,0),
+    all.use    = ifelse(exam1_pbuse == 1 & exam2_pbuse == 1, 1,0),
+    usage_pattern = factor(ifelse(dropped_pb == 1, "dropped",
+                                  ifelse(picked_up == 1, "adopted",
+                                         ifelse(no.use == 1, "never", 
+                                                ifelse(all.use == 1, "consistent", NA)))))
+  )
+```
+
+
+```{r without-statistics-stratified-matching-analysis-adoption-effect, echo=T, eval=T}
+exam.lvl.match.adopt.nostats <- exam.lvl.match.nostats %>% 
+  filter(first_use_exam1==0) %>%
+  mutate(usage_pattern = factor(usage_pattern, levels = c("never", "adopted")))
+
+match.adopt.df.nostats <- exam.lvl.match.adopt.nostats %>% 
+  select(user_source_id_sem, exam_key, course_semester, 
+         usage_pattern, exam_score, course, semester, gender, act_convtd, race, firstgen) %>%
+  group_by(exam_key, course_semester) %>%
+  mutate(class_mean_for_exam = mean(exam_score, na.rm =T),
+         class_sd_for_exam = sd(exam_score, na.rm =T),
+         exam_key = recode(exam_key, `Exam 1` = "E1", `Exam 2` = "E2")) %>%
+  pivot_wider(id_cols = c(user_source_id_sem, course_semester, usage_pattern),
+              names_from = exam_key, 
+              values_from = c(exam_score, class_mean_for_exam, class_sd_for_exam, course, semester, gender, act_convtd, race, firstgen))
+
+match.adopt.meta.df.nostats = data.frame()
+
+for(course_name in unique(match.adopt.df.nostats$course_semester)) {
+  
+  course_data_full <- match.adopt.df.nostats %>% filter(course_semester == course_name)
+  
+  course_data <- na.omit(course_data_full)
+  #print(paste(nrow(course_data_full) - nrow(course_data), "observations were omitted in", course_name))
+  
+  if(course_name != "Introductory Economics Winter"){
+    propensity <- matchit(factor(usage_pattern) ~ exam_score_E1 + gender_E1 + act_convtd_E1 + race_E1 + firstgen_E1,
+                          data=course_data,
+                          method = "subclass",
+                          subclass = 5,
+                          estimand = "ATE"
+    ) #one to one matching - each treated with one control
+    
+    matched_data <- match.data(propensity)
+    
+    fit1 <- lm(exam_score_E2 ~ factor(usage_pattern) + exam_score_E1 + gender_E1 + act_convtd_E1 + race_E1 + firstgen_E1, data = matched_data, weights = weights)
+    
+    match_result <- coeftest(fit1, vcov. = vcovCL, cluster = ~subclass)
+    
+    standardized_fit1 = lm( I((exam_score_E2-class_mean_for_exam_E2)/class_sd_for_exam_E2)
+                          ~ factor(usage_pattern) + exam_score_E1 + gender_E1 + act_convtd_E1 + race_E1 + firstgen_E1, data = matched_data, weights = weights)
+    match_standardized_result = coeftest(standardized_fit1, vcov. = vcovCL, cluster = ~subclass)
+  }
+  
+  # get class total
+  class_total <- user.lvl.nostats %>% filter(course_semester == course_name)
+  
+  if(course_name != "Introductory Economics Winter"){
+    match.adopt.meta.df.nostats = rbind(match.adopt.meta.df.nostats, 
+                                 data.frame(course_semester = course_name,
+                                            course = course_data$course_E1[1],
+                                            semester = course_data$semester_E1[1],
+                                            estimate = match_result[2,1],
+                                            se = match_result[2,2],
+                                            num = nrow(matched_data),
+                                            total = nrow(class_total),
+                                            standardized_estimate = match_standardized_result[2,1],
+                                            standardized_se = match_standardized_result[2,2]
+                                            ))
+  } else {
+  match.adopt.meta.df.nostats = rbind(match.adopt.meta.df.nostats, 
+                                 data.frame(course_semester = course_name,
+                                            course = course_data$course_E1[1],
+                                            semester = course_data$semester_E1[1],
+                                            estimate = NA,
+                                            se = NA,
+                                            num = NA,
+                                            total = NA,
+                                            standardized_estimate = NA,
+                                            standardized_se = NA
+                                            ))
+  }
+}
+
+
+match.adopt.meta.df.nostats.summary <- metagen(match.adopt.meta.df.nostats$estimate,
+                                               match.adopt.meta.df.nostats$se)
+
+match.adopt.meta.df.nostats.standardized.summary <-
+  metagen(match.adopt.meta.df.nostats$standardized_estimate, 
+          match.adopt.meta.df.nostats$standardized_se)
+
+match.adopt.meta.df.nostats.summary
+```
+
+```{r without-statistics-stratified-matching-analysis-dropping-effect, echo=T, eval=T}
+
+exam.lvl.match.drop.nostats <- exam.lvl.match.nostats %>% filter(exam1_pbuse == 1)
+
+match.drop.df.nostats <- exam.lvl.match.drop.nostats %>% 
+  select(user_source_id_sem, exam_key, course_semester, 
+         usage_pattern, exam_score, course, semester, gender, act_convtd, race, firstgen) %>%
+  group_by(exam_key, course_semester) %>%
+  mutate(class_mean_for_exam = mean(exam_score, na.rm =T),
+         class_sd_for_exam = sd(exam_score, na.rm =T),
+         exam_key = recode(exam_key, `Exam 1` = "E1", `Exam 2` = "E2")) %>%
+  pivot_wider(id_cols = c(user_source_id_sem, course_semester, usage_pattern),
+              names_from = exam_key, 
+              values_from = c(exam_score, class_mean_for_exam, class_sd_for_exam, course, semester, gender, act_convtd, race, firstgen))
+
+match.drop.meta.df.nostats = data.frame()
+
+for(course_name in unique(match.drop.df.nostats$course_semester)) {
+  
+  course_data_full <- match.drop.df.nostats %>% filter(course_semester == course_name)
+  
+  course_data <- na.omit(course_data_full)
+  #print(paste(nrow(course_data_full) - nrow(course_data), "observations were omitted in", course_name))
+  
+  if(course_name != "Introductory Economics Winter"){
+      propensity <- matchit(factor(usage_pattern) ~ exam_score_E1 + gender_E1 + act_convtd_E1 + race_E1 + firstgen_E1, 
+                            data=course_data,
+                            method = "subclass",
+                            subclass = 5,
+                            estimand = "ATE"
+      ) #one to one matching - each treated with one control
+      
+      matched_data <- match.data(propensity)
+      
+      fit1 <- lm(exam_score_E2 ~ factor(usage_pattern) + exam_score_E1 + gender_E1 + act_convtd_E1 + race_E1 + firstgen_E1, data = matched_data, weights = weights)
+
+      match_result <- coeftest(fit1, vcov. = vcovCL, cluster = ~subclass)
+      
+      standardized_fit1 = lm( I((exam_score_E2-class_mean_for_exam_E2)/class_sd_for_exam_E2)
+                          ~ factor(usage_pattern) + exam_score_E1 + gender_E1 + act_convtd_E1 + race_E1 + firstgen_E1, data = matched_data, weights = weights)
+      match_standardized_result = coeftest(standardized_fit1, vcov. = vcovCL, cluster = ~subclass)
+  }
+  
+  # get class total
+  class_total <- user.lvl.nostats %>% filter(course_semester == course_name)
+
+  if(course_name != "Introductory Economics Winter"){
+    match.drop.meta.df.nostats = rbind(match.drop.meta.df.nostats, 
+                                 data.frame(course_semester = course_name,
+                                            course = course_data$course_E1[1],
+                                            semester = course_data$semester_E1[1],
+                                            estimate = match_result[2,1],
+                                            se = match_result[2,2],
+                                            num = nrow(matched_data),
+                                            total = nrow(class_total),
+                                            standardized_estimate = match_standardized_result[2,1],
+                                            standardized_se = match_standardized_result[2,2]
+                                            ))
+  }else{
+  match.drop.meta.df.nostats = rbind(match.drop.meta.df.nostats, 
+                                 data.frame(course_semester = course_name,
+                                            course = course_data$course_E1[1],
+                                            semester = course_data$semester_E1[1],
+                                            estimate = NA,
+                                            se = NA,
+                                            num = NA,
+                                            total = NA,
+                                            standardized_estimate = NA,
+                                            standardized_se = NA
+                                            ))
+  }
+}
+
+
+match.drop.meta.df.nostats.summary <- metagen(match.drop.meta.df.nostats$estimate,
+                                              match.drop.meta.df.nostats$se)
+
+match.drop.meta.df.nostats.standardized.summary <-
+  metagen(match.drop.meta.df.nostats$standardized_estimate, 
+          match.drop.meta.df.nostats$standardized_se)
+
+match.drop.meta.df.nostats.summary
+```
+
+
+
+Following our earlier conservative test of generalizability beyond Introductory Statistics, repeating this stratified matching analyses with the 6 other courses excluding Introductory Statistics, we still observed these effects of adopting and dropping the Exam Playbook—albeit with smaller effect sizes. 
+When matched on their first exam performance, college entrance scores, and demographics, students who adopted the Exam Playbook performed an average of 
+`r report(match.adopt.meta.df.nostats.summary$TE.random)`
+percentage points 
+(`r report.ci(match.adopt.meta.df.nostats.summary$TE.random, match.adopt.meta.df.nostats.summary$seTE.random)`, 
+d = `r report(match.adopt.meta.df.nostats.standardized.summary$TE.random)`, 
+p `r report.p(match.adopt.meta.df.nostats.summary$pval.random)`
+better on the second exam, compared to those who never used it. 
+When matched on their first exam performance, college entrance scores, and demographics, students who dropped the Exam Playbook performed an average of 
+`r report(match.drop.meta.df.nostats.summary$TE.random)`
+percentage points 
+(`r report.ci(match.drop.meta.df.nostats.summary$TE.random, match.drop.meta.df.nostats.summary$seTE.random)`, 
+d = `r report(match.drop.meta.df.nostats.standardized.summary$TE.random)`,
+p `r report.p(match.drop.meta.df.nostats.summary$pval.random)`)
+worse, compared to those who kept using it (although this smaller effect of dropping was not significant at the .05 level). 
+
+
+
+
+
+### Supplemental Table 2
+
+```{r table-S2, echo=T, eval=T}
+# table(match.drop.df$course_semester, match.drop.df$usage_pattern)
+LABELS_ORDERED_FOR_TABLE_S2 <- 
+  c("Introduction to Statistics Fall",
+    "Introduction to Statistics Winter",
+    "Introductory Biology Fall", 
+    "Introductory Biology Winter", 
+    "General Chemistry Fall", 
+    "General Chemistry Winter", 
+    "General Physics Fall",
+    "General Physics Winter",
+    "Introductory Programming (Engin) Fall", 
+    "Introductory Programming (Engin) Winter", 
+    "Elementary Programming Fall",
+    "Elementary Programming Winter",
+    "Introductory Economics Fall",
+    "Introductory Economics Winter")
+
+tableS2_df = 
+  bind_rows((match.adopt.df %>% select(course_semester, usage_pattern)), 
+            (match.drop.df %>% select(course_semester, usage_pattern))) %>%
+  filter(!is.na(usage_pattern)) %>%
+  count(usage_pattern) %>%
+  pivot_wider(id_cols = course_semester,
+              names_from = usage_pattern,
+              values_from = n) %>%
+  arrange(match(course_semester, LABELS_ORDERED_FOR_TABLE_S2)) %>%
+  select(course_semester, adopted, never, dropped, consistent) # %>%
+  # rename(
+  #   Course_Semester = course_semester,
+  #   `Number of students who adopted the Exam Playbook` = adopted,
+  #   `Number of students who never used the Exam Playbook` = never,
+  #   `Number of students who dropped the Exam Playbook` = dropped,
+  #   `Number of students who consistently used the Exam Playbook` = consistent)
+
+
+tableS2_df
+```
+
+Descriptives of the total number and percentages of (i) students who adopted the Exam Playbook, compared to (ii) students who never used the Exam Playbook; and (iii) students who dropped the Exam Playbook, compared to (iv) students who consistently used the Exam Playbook. 
+Note: for Intro Economics, Winter, N was too small for this analysis
+
+
+## {.tabset}
+
+### Figure 2
+
+```{r plot-stratified-matching-analysis-both-effects, warning=F, echo=T, eval=T, fig.width=16, fig.height=10}
+g_legend <- function(a.gplot){
+  tmp <- ggplot_gtable(ggplot_build(a.gplot))
+  leg <- which(sapply(tmp$grobs, function(x) x$name) == "guide-box")
+  legend <- tmp$grobs[[leg]]
+  return(legend)}
+
+mylegend <- g_legend(matching.plot.adopt)
+
+#1600x800
+# 17 by 8.5 pdf
+
+grid.arrange(mylegend, arrangeGrob(matching.plot.adopt + theme(legend.position="none"),
+                         matching.plot.drop.right + theme(legend.position="none"),
+                         nrow=1),
+              nrow=2,heights=c(1, 10))
+```
+
+Note. Forest plot showing effect sizes from stratified matching analyses. Numbers below each course name indicate the number of students in that analysis (and as a percentage of the total class). Left: Effect of “adopting” the Exam Playbook. Both groups did not use the Exam Playbook at Exam 1; students who used it on Exam 2 outperformed students who did not. Right: Effect of “dropping” the Exam Playbook. Both groups used the Exam Playbook for Exam 1; students who dropped the Exam Playbook at Exam 2 did worse than students who consistently used it. Error bars reflect 95% confidence intervals.  
+
+
+Overall, these intra-individual data add further evidence to our meta-analyses suggesting that, on average, using the Exam Playbook predicts exam performance. We additionally describe in Supplementary Note 3 that these results also replicate using a difference-in-difference analytical method.
+
+
+
+# 4 Under what conditions is the Exam Playbook more or less effective?
+
+## Dosage and Timing {.tabset}
+
+Next, we examined whether there were dosage and timing effects of using the Exam Playbook. Uptake of the Exam Playbook peaked between the first two exams, and then dropped thereafter if there were more than 2 exams in the course (see Table 1). 
+
+
+```{r adding-usage-info-to-user.lvl-data, echo=T, eval=T}
+user.lvl$pb_use_sum_gmc <- NA
+
+course_nExam <- c(2,2,4,4,3,3,3,3,4,3,3,3,2,1)
+course_semester <- sort(unique(user.lvl$course_semester))
+course.exam.data <- data.frame(course_semester= course_semester,
+                               course_nExam = course_nExam)
+
+user.lvl <- user.lvl %>% left_join(course.exam.data, by = "course_semester")
+
+for (i in 1:length(course_semester)){
+  course_row <- which(user.lvl$course_semester == course_semester[i])
+  course_mean <- mean(user.lvl$pb_use_sum[course_row], na.rm = T)
+  user.lvl$pb_use_sum_gmc[course_row] <- course_mean
+}
+```
+
+### Effectiveness by ...
+
+### Dosage (within playbook users)
+
+
+```{r dosage-effect-at-user-level, echo=T, eval=T, class.output="bg-success"}
+usage.df.estimate <- data.frame()
+usage.df.se <- data.frame()
+usage.df.standardized.estimate <- data.frame()
+usage.df.standardized.se <- data.frame()
+
+course_name <- unique(user.lvl$course_semester)
+
+for (i in 1:length(course_name)){
+  
+  temp.df <- user.lvl %>%
+    filter(course_semester == course_name[i]) %>%
+    filter(pb_condition == "playbook") # only include playbook users
+  
+  lm.model.sum <- summary(lm(exam_score_avrg ~ pb_use_sum, data=temp.df))
+  
+  usage.df.estimate <- bind_coef(usage.df.estimate, extract_coef(lm.model.sum$coefficients, "Estimate"), rownames(lm.model.sum$coefficients))
+  usage.df.se <- bind_coef(usage.df.se, extract_coef(lm.model.sum$coefficients, "Std. Error"), rownames(lm.model.sum$coefficients))
+  
+  lm.model.standardized.sum <- summary(lm(exam_score_avrg_standardized ~ pb_use_sum, data=temp.df))
+  
+  usage.df.standardized.estimate <- 
+    bind_coef(usage.df.standardized.estimate, 
+              extract_coef(lm.model.standardized.sum$coefficients, "Estimate"),
+              rownames(lm.model.standardized.sum$coefficients))
+  usage.df.standardized.se <- 
+    bind_coef(usage.df.standardized.se, 
+              extract_coef(lm.model.standardized.sum$coefficients, "Std. Error"),
+              rownames(lm.model.standardized.sum$coefficients))
+}
+
+rownames(usage.df.estimate) <- course_name
+rownames(usage.df.se) <- course_name
+
+# dosage effect
+doses.df.summary = metagen(usage.df.estimate$pb_use_sum, 
+                           usage.df.se$pb_use_sum)
+
+doses.df.standardized.summary = 
+  metagen(usage.df.standardized.estimate$pb_use_sum, 
+          usage.df.standardized.se$pb_use_sum)
+
+doses.df.summary
+```
+
+Mixed-effects meta-analyses indicated that using the Exam Playbook on more occasions (i.e., higher dosages) related to better average exam performance 
+(b = `r report(doses.df.summary$TE.random)` percentage points 
+(`r report.ci(doses.df.summary$TE.random, doses.df.summary$seTE.random)`, 
+d = `r report(doses.df.standardized.summary$TE.random)`, 
+p `r report.p(doses.df.summary$pval.random)`)
+among students who used the Exam Playbook—consistent with findings from the original efficacy experiments (Chen et al., 2017). 
+
+
+
+
+### Time Left (within playbook users)
+
+```{r effect-of-time-remaining, echo=T, eval=T, class.output="bg-success"}
+#sum(exam.lvl$time_left > 10, na.rm=T)
+
+# truncated "> 10 days" to "10"
+exam.lvl$time_left_truncate <- ifelse(exam.lvl$time_left > 10, 10, exam.lvl$time_left)
+
+exam.lvl$time_left_truncate <- exam.lvl$time_left
+
+#mean(exam.lvl$time_left_truncate, na.rm=T)
+#sd(exam.lvl$time_left_truncate, na.rm=T)
+
+timeleft.df.estimate <- data.frame()
+timeleft.df.se <- data.frame()
+timeleft.df.standardized.estimate <- data.frame()
+timeleft.df.standardized.se <- data.frame()
+
+exam_name <- unique(exam.lvl$course_semester_exam)
+
+for (i in 1:length(exam_name)){
+  temp.df <- exam.lvl %>% filter(course_semester_exam == exam_name[i])
+  
+  lm.model.sum <- summary(lm(exam_score ~ time_left_truncate , data=temp.df))
+  
+  timeleft.df.estimate <- bind_coef(timeleft.df.estimate, extract_coef(lm.model.sum$coefficients, "Estimate"), rownames(lm.model.sum$coefficients))
+  timeleft.df.se <- bind_coef(timeleft.df.se, extract_coef(lm.model.sum$coefficients, "Std. Error"), rownames(lm.model.sum$coefficients))
+  
+  lm.model.standardized.sum <- summary(
+    lm(exam_score_standardized ~ time_left_truncate , data=temp.df))
+  
+  timeleft.df.standardized.estimate <- 
+    bind_coef(timeleft.df.standardized.estimate, 
+              extract_coef(lm.model.standardized.sum$coefficients, "Estimate"), 
+              rownames(lm.model.standardized.sum$coefficients))
+  timeleft.df.standardized.se <- 
+    bind_coef(timeleft.df.standardized.se, 
+              extract_coef(lm.model.standardized.sum$coefficients, "Std. Error"), 
+              rownames(lm.model.standardized.sum$coefficients))
+}
+
+rownames(timeleft.df.estimate) <- exam_name
+rownames(timeleft.df.se) <- exam_name
+
+# timing effect
+timing.df.summary = metagen(timeleft.df.estimate$time_left, 
+                            timeleft.df.se$time_left)
+
+timing.df.standardized.summary = 
+  metagen(timeleft.df.standardized.estimate$time_left, 
+          timeleft.df.standardized.se$time_left)
+
+timing.df.summary
+```
+
+The Exam Playbook was made available to students up to 10 days prior to their exams. The average student who used the Exam Playbook engaged with it a week 
+(M = `r report(mean(exam.lvl$time_left_truncate, na.rm=T))` days, 
+sd = `r report(sd(exam.lvl$time_left_truncate, na.rm=T), dp=3)` days) before their exams. 
+We used time of usage (number of days before the exam) to predict exam performance at the exam-level. Students who used the Exam Playbook benefited more from using it earlier 
+(b = 
+`r report(timing.df.summary$TE.random)` 
+percentage points per day 
+(`r report.ci(timing.df.summary$TE.random, timing.df.summary$seTE.random)`, 
+d = `r report(timing.df.standardized.summary$TE.random)`, 
+p `r report.p(timing.df.summary$pval.random)`)
+This suggests that early preparation is associated with better Exam Playbook effectiveness, although it could also reflect other motivation-relevant traits like better time-management and general self-regulatory ability (Steel, 2007). For example, students who used the Exam Playbook very close to the exam date might have procrastinated or crammed their exam preparation—reflecting lower self-regulation (Carvalho et al., 2020).
+
+
+
+
+```{r for-response-address-reviewer-point, echo=F, eval=F}
+# are dosage and time left correlated?
+
+# issue: dosage is at student level, time-left is at exam-level.
+# so: compute averaged time-left for each student, correlate with dosage.
+
+dosage_time_df = full_join(
+  user.lvl,
+  (exam.lvl %>% group_by(course_semester, user_id) %>% summarize(mean_time_left = mean(time_left_truncate, na.rm=T)) %>% ungroup()),
+  by=c("course_semester", "user_id")
+) %>% filter(pb_condition == "playbook")
+
+cor(dosage_time_df$pb_use_sum, dosage_time_df$mean_time_left, use="complete")
+
+dosage_time_df %>% lm(pb_use_sum ~ mean_time_left, data = .) %>% summary()
+```
+
+
+## What Kinds of Students Naturally Used the Exam Playbook? {.tabset}
+
+To better understand which students naturally used the Exam Playbook as a learning resource, we ran a mixed-effects logistic regression using academic ability (college entrance exam score) and demographic variables (gender, race, first-generation status) as predictors of whether students used the Exam Playbook at least once in their classes. 
+
+
+
+### Use of Playbook by ...
+
+
+```{r mixed-effects-logistic-regression, echo=T, eval=T}
+user.lvl <- user.lvl %>% mutate(
+  race = factor(race, levels=c("White", "Asian", "Black", 
+                               "Hawaiian", "Hispanic", "Native Amr", 
+                               "Not Indic", "2 or More")))
+pb.use.mlm.logit <- glmer(
+  factor(pb_condition) ~ scale(act_convtd, scale=F) + race + gender + 
+    firstgen + (1|course_semester), 
+  data=user.lvl, family = "binomial")
+
+pb.use.mlm.logit.releveled.sum = user.lvl %>% 
+  mutate(race = fct_relevel(race, "Asian")) %>% 
+  glmer(
+    factor(pb_condition) ~ scale(act_convtd, scale=F) + race + gender + 
+      firstgen + (1|course_semester), 
+    data=., family = "binomial") %>%
+  summary()
+
+
+#summary(pb.use.mlm.logit) 
+Anova(pb.use.mlm.logit)
+```
+
+
+
+### Academic Ability
+
+Academic ability did not significantly predict Exam Playbook usage 
+(χ2
+(`r Anova(pb.use.mlm.logit)[ "scale(act_convtd, scale = F)"  , "Df"]`) = 
+`r report(Anova(pb.use.mlm.logit)[ "scale(act_convtd, scale = F)"  , "Chisq"])`, 
+p`r report.p(Anova(pb.use.mlm.logit)[ "scale(act_convtd, scale = F)"  , "Pr(>Chisq)"])`)
+, which suggests that natural adoption of this Exam Playbook resource may not have been restricted to higher performers or simply more motivated students. 
+
+### Gender 
+
+
+However, there were demographic differences in natural uptake of the Exam Playbook. Gender significantly predicted Exam Playbook adoption 
+(χ2
+(`r Anova(pb.use.mlm.logit)[ "gender"  , "Df"]`) = 
+`r report(Anova(pb.use.mlm.logit)[ "gender"  , "Chisq"])`, 
+p`r report.p(Anova(pb.use.mlm.logit)[ "gender"  , "Pr(>Chisq)"])`)
+: the odds of females using the Exam Playbook were 
+`r report(exp( -1*summary(pb.use.mlm.logit)$coeff["genderMale","Estimate"]) )` 
+times higher than males. 
+
+
+### Race
+
+Race also predicted Exam Playbook adoption 
+(χ2
+(`r Anova(pb.use.mlm.logit)[ "race"  , "Df"]`) = 
+`r report(Anova(pb.use.mlm.logit)[ "race"  , "Chisq"])`, 
+p`r report.p(Anova(pb.use.mlm.logit)[ "race"  , "Pr(>Chisq)"])`)
+: in particular, Black and Hispanic students were less likely to use the Exam Playbook on their exams 
+(Black students had 
+`r report(exp( 1*summary(pb.use.mlm.logit)$coeff["raceBlack", "Estimate"] ))` 
+times the odds of using it compared to White students, 
+p`r report.p(summary(pb.use.mlm.logit)$coeff["raceBlack", "Pr(>|z|)"])`, 
+and 
+`r report(exp( pb.use.mlm.logit.releveled.sum$coeff["raceBlack", "Estimate"] ))` 
+times the odds compared to Asian students, 
+p`r report.p(pb.use.mlm.logit.releveled.sum$coeff["raceBlack", "Pr(>|z|)"])`
+; 
+Hispanic students had 
+`r report(exp( 1*summary(pb.use.mlm.logit)$coeff["raceHispanic", "Estimate"] ))`
+times the odds of using it compared to White students, 
+p`r report.p(summary(pb.use.mlm.logit)$coeff["raceHispanic", "Pr(>|z|)"])`,
+and 
+`r report(exp( pb.use.mlm.logit.releveled.sum$coeff["raceHispanic", "Estimate"] ))` 
+times the odds of using it compared to Asian students, 
+p`r report.p(pb.use.mlm.logit.releveled.sum$coeff["raceHispanic", "Pr(>|z|)"])`
+). 
+
+
+### First Generation Status
+
+
+First-generation status did not predict Exam Playbook adoption (χ2
+(`r Anova(pb.use.mlm.logit)[ "firstgen"  , "Df"]`) = 
+`r report(Anova(pb.use.mlm.logit)[ "firstgen"  , "Chisq"])`, 
+p`r report.p(Anova(pb.use.mlm.logit)[ "firstgen"  , "Pr(>Chisq)"])`
+).
+
+
+
+
+
+## Were there Differential Benefits to Different Groups of Students? {.tabset}
+
+Could certain groups of students have benefitted more (or less) from using the Exam Playbook? We fitted separate mixed-effects linear models to test the moderation effect of gender, race, and first-generation status on the effectiveness of using the Exam Playbook. 
+
+### Differential Benefits by ...
+
+### Gender
+
+```{r gender-moderation-model, echo=T, eval=T, class.output="bg-success"}
+mod.mlm.gender <- lmer(exam_score_avrg ~ pb_condition*gender + 
+                         (1+pb_condition|course_semester), data=user.lvl)
+
+mod.mlm.gender.sum <- summary(mod.mlm.gender) 
+
+mod.mlm.gender.standardized.sum <- summary(lmer(
+  exam_score_avrg_standardized ~ pb_condition*gender + 
+    (1+pb_condition|course_semester), data=user.lvl))
+
+#Anova(mod.mlm.gender)
+mod.mlm.gender.sum
+```
+
+
+Gender significantly moderated Exam Playbook effects: while females generally performed worse than males 
+(b = `r report(mod.mlm.gender.sum$coefficients[3,1])` 
+(`r report.ci(mod.mlm.gender.sum$coefficients[3,1], mod.mlm.gender.sum$coefficients[3,2])`, 
+d = `r report(mod.mlm.gender.standardized.sum$coefficients[3,1])`, 
+p `r report.p(mod.mlm.gender.sum$coefficients[3,5])`), 
+as is commonly observed in STEM classes, female users benefitted 
+`r report(-1 * mod.mlm.gender.sum$coefficients[4,1])` 
+percentage points 
+(b = `r report(-1 * mod.mlm.gender.sum$coefficients[4,1])` 
+(`r report.ci(-1 * mod.mlm.gender.sum$coefficients[4,1], mod.mlm.gender.sum$coefficients[4,2])`, 
+d = `r report(-1 * mod.mlm.gender.standardized.sum$coefficients[4,1])`,
+p `r report.p(mod.mlm.gender.sum$coefficients[4,5])`)
+more from using the Exam Playbook than male users—a substantial 
+`r report(-1 * 100 * (mod.mlm.gender.sum$coefficients[4,1] / mod.mlm.gender.sum$coefficients[3,1]))`% 
+reduction in the gender gap. 
+
+### Race
+
+```{r race-moderation-model, echo=T, eval=T, class.output="bg-success"}
+
+mod.mlm.race <- lmer(exam_score_avrg ~ pb_condition*race + 
+                       (1+pb_condition|course_semester), data=user.lvl)
+
+#summary(mod.mlm.race) 
+Anova(mod.mlm.race)
+```
+
+
+Race did not moderate Exam Playbook effects (χ2
+(`r Anova(mod.mlm.race)[ "pb_condition:race"  , "Df"]`) = 
+`r report(Anova(mod.mlm.race)[ "pb_condition:race"  , "Chisq"])`,
+p`r report.p(Anova(mod.mlm.race)[ "pb_condition:race"  , "Pr(>Chisq)"])`
+). 
+
+### First Generation Status
+
+```{r firstgen-moderation-model, echo=T, eval=T, class.output="bg-success"}
+mod.mlm.firstgen.sum <- summary(lmer(exam_score_avrg ~ pb_condition*firstgen +
+                                       (1+pb_condition|course_semester), data=user.lvl)) 
+
+mod.mlm.firstgen.standardized.sum <- summary(lmer(
+  exam_score_avrg_standardized ~ pb_condition*firstgen + 
+    (1+pb_condition|course_semester), data=user.lvl)) 
+
+#Anova(mod.mlm.firstgen)
+mod.mlm.firstgen.sum
+```
+
+
+First-generation status significantly moderated Exam Playbook effects: while first-generation students generally performed worse than non-first-generation students 
+(b = `r report(mod.mlm.firstgen.sum$coefficients[3,1])` 
+(`r report.ci(mod.mlm.firstgen.sum$coefficients[3,1], mod.mlm.firstgen.sum$coefficients[3,2])`, 
+d = `r report(mod.mlm.firstgen.standardized.sum$coefficients[3,1])`
+p `r report.p(mod.mlm.firstgen.sum$coefficients[3,5])`), 
+using the Exam Playbook reduced this gap by an average of 
+`r report(mod.mlm.firstgen.sum$coefficients[4,1])` 
+(`r report.ci(mod.mlm.firstgen.sum$coefficients[4,1], mod.mlm.firstgen.sum$coefficients[4,2])`, 
+d = `r report(mod.mlm.firstgen.standardized.sum$coefficients[4,1])`, 
+p `r report.p(mod.mlm.firstgen.sum$coefficients[4,5])`,
+percentage points—a 
+`r report(-1 * 100 * (mod.mlm.firstgen.sum$coefficients[4,1] / mod.mlm.firstgen.sum$coefficients[3,1]))`%
+reduction in the first-generation achievement gap. 
+
+
+
+
+
+# Supplementary Material
+
+## Supplementary Note 1 -- Additional Details on Definition and Operationalization of Exam Playbook “Use” {.tabset}
+
+### Text
+
+As described in the main text, we operationalized a “use” of the Exam Playbook to mean accessing and completing the intervention, including: completing the resource checklist, explaining why each resource would be useful, and planning resource use. Students had to click through to the end of the intervention to be counted as having used it.
+In the table below, we detail how many instances there were of students who started using the Exam Playbook, and how many of those students finished it. For some classes, such as both Intro Programming classes, and Intro Statistics, over 83% of students who started the resource finished it. For other classes, the completion rates were lower, ranging from 30%-65%. In this paper, we counted only instances where students completed the Exam Playbook as a “use.”
+
+### Table
+
+Descriptives of the number of instances where students started the Exam Playbook and the number (and percentage) of those who completed using it, categorized by course and semester
+
+```{r detailed-breakdown-of-playbook-usage, echo=T, eval=T}
+examlvl.drop <- exam.lvl %>% 
+  mutate(
+    #adding in column to identify students that started the pb
+    pb_use_start = ifelse(is.na(created), 0, 1),
+    pb_use_status = as.character(pb_use_status)
+  ) %>% 
+  mutate(
+    # adding 1 more level to pb_use_status: "started".
+    pb_use_status = ifelse(
+      pb_use_start == 1 & is.na(pb_use_status),
+      "started",
+      pb_use_status
+    )
+  )
+
+#computing sum of students that started the survey 
+examlvl.drop.sum <- examlvl.drop %>% 
+  group_by(semester, course, pb_use_start) %>% 
+  count() %>% 
+  filter(pb_use_start == 1) %>% 
+  rename(tot_no_students_start = n) %>% 
+  ungroup() %>% 
+  select(-pb_use_start)
+
+#creating wide table of each row's status
+examlvl.drop.status <- examlvl.drop %>% 
+  group_by(semester, course, pb_use_status) %>%
+  count() %>% 
+  pivot_wider(names_from = pb_use_status, values_from = n) %>% 
+  select(course, semester, started, intro, strat, plan, `NA`)
+
+examlvl.drop.status.table <- examlvl.drop.status %>% 
+  arrange(match(course, LABELS_ORDERED_FOR_TABLE), semester) %>%
+  mutate(Started.Playbook = started + intro + strat + plan,
+         Completed.Playbook = plan) %>%
+  select(course, semester, Started.Playbook, Completed.Playbook)
+
+examlvl.drop.status.table
+
+```
+
+
+
+
+## Supplementary Note 3 - Difference-in-Difference Analysis {.tabset}
+
+### Text
+
+```{r preparing-data-for-did-analysis, echo=T, eval=T}
+exam.lvl.did <- exam.lvl %>%
+  filter(source != "EECS280") %>%
+  filter(exam_key == "Exam 1"| exam_key == "Exam 2")
+
+# creating late variable
+exam.lvl.did$time <- ifelse(exam.lvl.did$exam_key == "Exam 1", 0, 1)
+
+playbk_use <- spread(exam.lvl[, c("user_source_id_sem", "pb_use", "exam_key")], 
+                     key = exam_key, value = pb_use)
+
+colnames(playbk_use) <- c("user_source_id_sem", "exam1_pbuse", 
+                          "exam2_pbuse", "exam3_pbuse", "exam4_pbuse")
+
+# drop coursees who have less than 3 exams
+# stats250 is dropped as well as it has many pb users in exam 3
+exam.lvl.did <- exam.lvl.did %>%
+  left_join(playbk_use, by = "user_source_id_sem")
+
+exam.lvl.did$dropped_pb <- 
+  ifelse(exam.lvl.did$exam1_pbuse == 1& exam.lvl.did$exam2_pbuse == 0, 1,0)
+
+exam.lvl.did$picked_up <- 
+  ifelse(exam.lvl.did$exam1_pbuse == 0& exam.lvl.did$exam2_pbuse == 1, 1,0)
+
+exam.lvl.did$no.use <- 
+  ifelse(exam.lvl.did$exam2_pbuse == 0 & exam.lvl.did$exam2_pbuse == 0, 1,0)
+
+exam.lvl.did$all.use <- 
+  ifelse(exam.lvl.did$exam1_pbuse == 1 & exam.lvl.did$exam2_pbuse == 1, 1,0)
+
+
+exam.lvl.did$usage_pattern <- 
+  ifelse(exam.lvl.did$dropped_pb == 1, "dropped",
+         ifelse(exam.lvl.did$picked_up == 1, "adopted",
+                ifelse(exam.lvl.did$no.use == 1, "never", 
+                       ifelse(exam.lvl.did$all.use == 1, "consistent", NA)
+                )
+         )
+  ) 
+```
+
+
+An alternative method of assessing the effect of adopting or dropping the Exam Playbook is using a difference-in-differences (DiD) regression model (Angrist & Pischke, 2008). Here, we report our results using this model and show that it replicates our results obtained by stratified matching that were reported in the main text. 
+
+Similar to our analysis using stratified matching, we restricted our analyses to only the first two exams of each class. To estimate the effect of adopting the Exam Playbook, we took the subset of students who did not use the Exam Playbook on their first exam. For each class, we ran a separate DiD model, controlling for college entrance scores, gender, race, and first-generation status, and aggregated the regression estimates using a random-effects meta-analysis. 
+
+
+### Adoption
+
+```{r did-estimation-of-adoption-effect, echo=T, eval=T, class.output="bg-success"}
+exam.lvl.did.adopt <- exam.lvl.did %>% filter(first_use_exam1==0) 
+
+course_name <- unique(exam.lvl.did.adopt$course_semester)
+
+did.adopt.meta.df <- data.frame()
+
+for (j in 1:length(course_name)){
+  course_data <- exam.lvl.did.adopt[exam.lvl.did.adopt$course_semester == course_name[j], ]
+  lm.did = lm(exam_score ~ first_use_exam2*time + 
+                act_convtd + gender+race + firstgen, data =  course_data)
+  lm.did.sum <- summary(lm.did)
+  
+  lm.did.standardized = lm(exam_score_standardized ~ first_use_exam2*time + 
+                             act_convtd + gender+race + firstgen, data =  course_data)
+  lm.did.standardized.sum <- summary(lm.did.standardized)
+  
+  did.adopt.meta.df = rbind(
+    did.adopt.meta.df, 
+    data.frame(course_semester = course_name[j],
+               course = course_data$course[1],
+               semester = course_data$semester[1],
+               estimate = lm.did.sum$coefficients["first_use_exam2:time",1],
+               se = lm.did.sum$coefficients["first_use_exam2:time",2],
+               standardized_estimate =
+                 lm.did.standardized.sum$coefficients["first_use_exam2:time",1],
+               standardized_se = 
+                 lm.did.standardized.sum$coefficients["first_use_exam2:time",2],
+               num = length(unique(course_data$user_source_id)))) 
+  
+}
+
+did.adopt.meta.summary <- metagen(did.adopt.meta.df$estimate, 
+                                  did.adopt.meta.df$se)
+
+did.adopt.meta.standardized.summary <- 
+  metagen(did.adopt.meta.df$standardized_estimate, 
+          did.adopt.meta.df$standardized_se)
+
+did.adopt.meta.summary
+```
+
+This was the model we ran on each class (for adopting):
+
+```
+lm(exam_score ~ adopted_playbook*time + 
+                    college_entrance_score + gender + race + first_gen, 
+   data = subset(exam_lvl, did_not_use_playbook_on_exam1))
+```
+
+This analysis only includes the students who did not use the Exam Playbook in the first exam. “adopted_playbook” is a dummy-coded variable that indicates the students who started using the Exam Playbook on their second exam.
+
+### Dropping
+
+```{r did-estimation-of-dropping-effect, echo=T, eval=T, class.output="bg-success"}
+
+# remove students who used never used the pb or used pb only second time
+exam.lvl.did.drop <- exam.lvl.did %>% filter(exam1_pbuse == 1)
+
+course_name <- unique(exam.lvl.did.drop$course_semester)
+
+did.drop.meta.df <- data.frame()
+
+for (j in 1:length(course_name)){
+  course_data <- exam.lvl.did.drop[exam.lvl.did.drop$course_semester == course_name[j], ]
+  lm.did = lm(exam_score ~ dropped_pb*time + 
+                act_convtd + gender+ firstgen +race, data =  course_data)
+  lm.did.sum <- summary(lm.did)
+  
+  lm.did.standardized = lm(exam_score_standardized ~ dropped_pb*time + 
+                             act_convtd + gender+race + firstgen, data =  course_data)
+  lm.did.standardized.sum <- summary(lm.did.standardized)
+  
+  did.drop.meta.df = rbind(
+    did.drop.meta.df, 
+    data.frame(course_semester = course_name[j],
+               course = course_data$course[1],
+               semester = course_data$semester[1],
+               estimate = lm.did.sum$coefficients["dropped_pb:time",1],
+               se = lm.did.sum$coefficients["dropped_pb:time",2],
+               standardized_estimate = 
+                 lm.did.standardized.sum$coefficients["dropped_pb:time",1],
+               standardized_se = 
+                 lm.did.standardized.sum$coefficients["dropped_pb:time",2],
+               num = length(unique(course_data$user_source_id)))) 
+}
+
+did.drop.meta.summary <- metagen(did.drop.meta.df$estimate, 
+                                 did.drop.meta.df$se)
+
+did.drop.meta.standardized.summary <- 
+  metagen(did.drop.meta.df$standardized_estimate, 
+          did.drop.meta.df$standardized_se)
+
+did.drop.meta.summary
+```
+
+This was the model we ran on each class (for dropping):
+
+```
+lm(exam_score ~ dropped_playbook*time + 
+                    college_entrance_score + gender + race + first_gen, 
+   data = subset(exam_lvl, used_playbook_on_exam1))
+```
+
+This analysis only includes the students who used the Exam Playbook in the first exam. “dropped_playbook” is a dummy-coded variable that indicates the students who dropped the Exam Playbook on their second exam.
+
+### Results
+
+After students adopted the Exam Playbook, they performed better on the subsequent exam by an average of 
+`r report(did.adopt.meta.summary$TE.random)`
+percentage points 
+(`r report.ci(did.adopt.meta.summary$TE.random, did.adopt.meta.summary$seTE.random)`, 
+d = `r report(did.adopt.meta.standardized.summary$TE.random)`,
+p `r report.p(did.adopt.meta.summary$pval.random)`).
+
+We repeated this analysis to estimate the effect of dropping the Exam Playbook, by taking the subset of students who used the Exam Playbook on their first exam. Controlling for college entrance scores, gender, race, and first-generation status, we estimated that after dropping the Exam Playbook, students performed worse by 
+`r report(-1 * did.drop.meta.summary$TE.random)`
+percentage points 
+(`r report.ci(-1 * did.drop.meta.summary$TE.random, did.drop.meta.summary$seTE.random)`, 
+d = `r report(-1 * did.drop.meta.standardized.summary$TE.random)`,
+p `r report.p(did.drop.meta.summary$pval.random)`). 
+
+These estimates were consistent in terms of general direction and magnitude with the estimates from our analyses using stratified matching 
+(
+`r report(match.adopt.meta.df.summary$TE.random)`
+percentage points,
+d = `r report(match.adopt.meta.df.standardized.summary$TE.random)`, 
+for adopting and 
+`r report(match.drop.meta.df.summary$TE.random)`
+percentage points, 
+d = `r report(match.drop.meta.df.standardized.summary$TE.random)`,
+for dropping).
+
+
+
+
+### Repeating without introductory statistics
+
+
+```{r without-statistics-did-estimation-of-adoption-effect, echo=T, eval=T, class.output="bg-success"}
+
+exam.lvl.did.adopt.nostats <- exam.lvl.did %>% 
+  filter(first_use_exam1==0) %>% filter(!(course %in% c("Introduction to Statistics")))
+
+course_name <- unique(exam.lvl.did.adopt.nostats$course_semester)
+
+did.adopt.meta.df.nostats <- data.frame()
+
+for (j in 1:length(course_name)){
+  course_data <- exam.lvl.did.adopt.nostats[exam.lvl.did.adopt.nostats$course_semester == course_name[j], ]
+  lm.did = lm(exam_score ~ first_use_exam2*time + 
+                act_convtd + gender+race + firstgen, data =  course_data)
+  lm.did.sum <- summary(lm.did)
+  
+  lm.did.standardized = lm(exam_score_standardized ~ first_use_exam2*time + 
+                             act_convtd + gender+race + firstgen, data =  course_data)
+  lm.did.standardized.sum <- summary(lm.did.standardized)
+  
+  did.adopt.meta.df.nostats = rbind(
+    did.adopt.meta.df.nostats, 
+    data.frame(course_semester = course_name[j],
+               course = course_data$course[1],
+               semester = course_data$semester[1],
+               estimate = lm.did.sum$coefficients["first_use_exam2:time",1],
+               se = lm.did.sum$coefficients["first_use_exam2:time",2],
+               standardized_estimate =
+                 lm.did.standardized.sum$coefficients["first_use_exam2:time",1],
+               standardized_se = 
+                 lm.did.standardized.sum$coefficients["first_use_exam2:time",2],
+               num = length(unique(course_data$user_source_id)))) 
+  
+}
+
+did.adopt.meta.nostats.summary <- metagen(did.adopt.meta.df.nostats$estimate, 
+                                          did.adopt.meta.df.nostats$se)
+
+did.adopt.meta.nostats.standardized.summary <- 
+  metagen(did.adopt.meta.df.nostats$standardized_estimate, 
+          did.adopt.meta.df.nostats$standardized_se)
+
+did.adopt.meta.nostats.summary
+```
+
+
+```{r without-statistics-did-estimation-of-dropping-effect, echo=T, eval=T, class.output="bg-success"}
+
+# remove students who used never used the pb or used pb only second time
+exam.lvl.did.drop.nostats <- exam.lvl.did %>% 
+  filter(exam1_pbuse == 1) %>% filter(!(course %in% c("Introduction to Statistics")))
+
+course_name <- unique(exam.lvl.did.drop.nostats$course_semester)
+
+did.drop.meta.df.nostats <- data.frame()
+
+for (j in 1:length(course_name)){
+  course_data <- exam.lvl.did.drop.nostats[exam.lvl.did.drop.nostats$course_semester == course_name[j], ]
+  lm.did = lm(exam_score ~ dropped_pb*time + 
+                act_convtd + gender+ firstgen +race, data =  course_data)
+  lm.did.sum <- summary(lm.did)
+  
+  lm.did.standardized = lm(exam_score_standardized ~ dropped_pb*time + 
+                             act_convtd + gender+race + firstgen, data =  course_data)
+  lm.did.standardized.sum <- summary(lm.did.standardized)
+  
+  did.drop.meta.df.nostats = rbind(
+    did.drop.meta.df.nostats, 
+    data.frame(course_semester = course_name[j],
+               course = course_data$course[1],
+               semester = course_data$semester[1],
+               estimate = lm.did.sum$coefficients["dropped_pb:time",1],
+               se = lm.did.sum$coefficients["dropped_pb:time",2],
+               standardized_estimate = 
+                 lm.did.standardized.sum$coefficients["dropped_pb:time",1],
+               standardized_se = 
+                 lm.did.standardized.sum$coefficients["dropped_pb:time",2],
+               num = length(unique(course_data$user_source_id)))) 
+}
+
+did.drop.meta.nostats.summary <- metagen(did.drop.meta.df.nostats$estimate, 
+                                         did.drop.meta.df.nostats$se)
+
+did.drop.meta.nostats.standardized.summary <- 
+  metagen(did.drop.meta.df.nostats$standardized_estimate, 
+          did.drop.meta.df.nostats$standardized_se)
+
+did.drop.meta.nostats.summary
+```
+
+
+If we exclude Introduction to Statistics to test the generalization of the Exam Playbook, we find that the difference-in-difference analysis still yields a significant positive effect of adoption. Controlling for college entrance scores, gender, race, and first-generation status, students who adopted the Exam Playbook performed better on the subsequent exam by an average of 
+`r report(did.adopt.meta.nostats.summary$TE.random)`
+percentage points 
+(`r report.ci(did.adopt.meta.nostats.summary$TE.random, did.adopt.meta.nostats.summary$seTE.random)`, 
+d = `r report(did.adopt.meta.nostats.standardized.summary$TE.random)`,
+p `r report.p(did.adopt.meta.nostats.summary$pval.random)`).
+However, excluding Introductory Statistics, we found that the difference-in-difference effect for dropping the playbook is not statistically significant at the 0.05 level (b = `r report(-1 * did.drop.meta.nostats.summary$TE.random)`
+percentage points 
+(`r report.ci(-1 * did.drop.meta.nostats.summary$TE.random, did.drop.meta.nostats.summary$seTE.random)`, 
+d = `r report(-1 * did.drop.meta.nostats.standardized.summary$TE.random)`,
+p `r report.p(did.drop.meta.nostats.summary$pval.random)`). 
+
+
+
+
+
+## Supplementary Note 4 - Additional Information About Administration Timing {.tabset}
+
+```{r effect-of-time-remaining-no-truncation, echo=T, eval=T}
+timeleft.notrunc.df.estimate <- data.frame()
+timeleft.notrunc.df.se <- data.frame()
+
+exam_name <- unique(exam.lvl$course_semester_exam)
+
+for (i in 1:length(exam_name)){
+  
+  temp.df <- exam.lvl %>%
+    filter(course_semester_exam == exam_name[i])
+  
+  lm.model <-   lm(exam_score ~ time_left , data=temp.df)
+  
+  lm.model.sum <- summary(lm.model)
+  
+  timeleft.notrunc.df.estimate <- bind_coef(timeleft.notrunc.df.estimate, extract_coef(lm.model.sum$coefficients, "Estimate"), rownames(lm.model.sum$coefficients))
+  
+   timeleft.notrunc.df.se <- bind_coef(timeleft.notrunc.df.se, extract_coef(lm.model.sum$coefficients, "Std. Error"), rownames(lm.model.sum$coefficients))
+  
+}
+
+rownames(timeleft.notrunc.df.estimate) <- exam_name
+
+rownames(timeleft.notrunc.df.se) <- exam_name
+
+timeleft.notrunc.df.summary = metagen(timeleft.notrunc.df.estimate$time_left,
+                                      timeleft.notrunc.df.se$time_left)
+```
+
+### Text
+
+Due to logistical errors in communication between the intervention administration team and instructors, 137 (1.1% out of 12,065) students were accidentally given access to the Exam Playbook earlier than 10 days prior to their exams. Because the planned official release date was 10 days prior to the exam, and this was also the earliest timing that the vast majority of students could access the Exam Playbook via ECoach, in the main paper analysis we report analyses using a truncated “time_left” variable that ensured values fell between 0-10 (i.e., any value above 10 was replaced with 10). Nevertheless, we also repeated this analysis without truncation (i.e., using 15 days before the exam that was the maximum time that any student had accessed the Exam Playbook). Consistent with the main findings, students who used the Exam Playbook benefitted more from using it earlier (b = 
+`r report(timeleft.notrunc.df.summary$TE.random)`
+percentage points per day 
+(`r report.ci(timeleft.notrunc.df.summary$TE.random, timeleft.notrunc.df.summary$seTE.random)`, 
+p `r report.p(timeleft.notrunc.df.summary$pval.random)`)
+compared to b = 
+`r report(timing.df.summary$TE.random)`
+percentage points per day without truncation).
+
+
+### Code output
+```{r effect-of-time-remaining-no-truncation-output, echo=T, eval=T}
+timeleft.notrunc.df.summary
+```
+
+
+
+## Supplementary Note 6 - Mixed-Effects Hierarchical Linear Modelling {.tabset}
+
+### Text
+
+In our analyses in the main text, we used a mixed-effects meta-analysis model to aggregate the effect size estimates across the different classes, treating each class as a separate “experiment”. We preferred this approach as we wanted to further examine heterogeneity across classes. An alternative analysis approach is mixed-effects hierarchical linear modelling, where we treat students as nested within course and semester. Here, we report our results using this alternative approach, using the lme4 package (v1.1-26; Bates et al., 2014), of estimation and show that we can draw similar conclusions. 
+
+### Effect of using the Exam Playbook at least once
+
+```{r playbook-effect-mlm, warning=F, echo=T, eval=T}
+mod.pb.effect.sum = summary(
+  lmer(exam_score_avrg ~ pb_condition + (1|course) + (1|semester), user.lvl))
+
+mod.pb.effect.standardized.sum = summary(
+  lmer(exam_score_avrg_standardized ~ pb_condition + (1|course) + (1|semester), user.lvl))
+```
+
+
+To estimate the effect of using the Exam Playbook, we used a dummy-coded variable indicating that a student used the Exam Playbook at least once throughout the semester (playbook_user) to predict their average exam score in the class. We added random effects by course and semester (Note: We tried fitting a model with course nested within semester, but the model reported a singular fit, suggesting that the random-effect structure is over-fitted.). Specifically, we ran the following model:
+
+```
+lmer(avg_exam_score ~ playbook_user + (1|course) + (1|semester), data= user_lvl)
+```
+
+Consistent with the meta-analysis model, we found that students who used the Exam Playbook outperformed students who did not 
+(b = `r report(mod.pb.effect.sum$coefficients["pb_conditionplaybook",1])`
+percentage points
+(`r report.ci(mod.pb.effect.sum$coefficients["pb_conditionplaybook",1], mod.pb.effect.sum$coefficients["pb_conditionplaybook",2])`, 
+d = `r report(mod.pb.effect.standardized.sum$coefficients["pb_conditionplaybook",1])`, 
+p `r report.p(mod.pb.effect.sum$coefficients["pb_conditionplaybook",5])`); 
+compared to 
+`r report(pb_condition.effect.summary$TE.random)`
+percentage points, 
+d = `r report(pb_condition.effect.standardized.summary$TE.random)`, 
+estimated by meta-analysis). 
+
+### Effect of using the Exam Playbook at exam level
+
+```{r playbook-effect-exam-level-mlm, warning=F, echo=T, eval=T}
+mod.pb.effect.examlvl.sum = 
+  summary(lmer(exam_score ~ pb_use + 
+                 (1|exam_key:course) + (1|user_id:course) + (1|semester), exam.lvl))
+
+mod.pb.effect.examlvl.standardized.sum = 
+  summary(lmer(exam_score_standardized ~ pb_use + 
+                 (1|exam_key:course) + (1|user_id:course) + (1|semester), exam.lvl))
+```
+
+We did a further robustness check to repeat this analysis at the exam level:
+
+```
+lmer(exam_score ~ used_playbook + (1|exam:course) + (1|student:course) + (1|semester), data= exam_lvl)
+```
+
+We found that students who used the Exam Playbook on a given exam performed better than students who did not 
+(b = `r report(mod.pb.effect.examlvl.sum$coefficients["pb_use",1])`
+percentage points 
+(`r report.ci(mod.pb.effect.examlvl.sum$coefficients["pb_use",1], mod.pb.effect.examlvl.sum$coefficients["pb_use",2])`, 
+d = `r report(mod.pb.effect.examlvl.standardized.sum$coefficients["pb_use",1])`, 
+p `r report.p(mod.pb.effect.examlvl.sum$coefficients["pb_use",5])`); 
+compared to 
+`r report(pb_exam.effect$TE.random)`
+percentage points, d = `r report(pb_exam.effect.standardized$TE.random)`, 
+estimated by meta-analysis).
+
+
+### Dosage effect
+
+```{r dosage-effect-mlm, warning=F, echo=T, eval=T}
+mod.mlm.dosage.sum = summary(lmer(exam_score_avrg ~ pb_use_sum + 
+                                    (1|semester) + (1|course)  ,
+                                  data=user.lvl %>% filter(pb_condition == "playbook")) )
+
+mod.mlm.dosage.standardized.sum =
+  summary(lmer(exam_score_avrg_standardized ~ pb_use_sum + 
+                 (1|semester) + (1|course)  ,
+               data=user.lvl %>% filter(pb_condition == "playbook")) )
+```
+
+Dosage and Timing. To estimate the dosage effect, we considered the subset of Exam Playbook users, and used the number of times they used the Exam Playbook to predict their average exam score in the class. We added random effects by course and semester.
+
+```
+lmer(avg_exam_score ~ sum_playbook_usage + (1|course) + (1|semester), data= playbook_users)
+```
+
+We found that among students who used the Exam Playbook, using the Exam Playbook on more occasions related to better average exam performance 
+(b = `r report(mod.mlm.dosage.sum$coefficients["pb_use_sum",1])`
+percentage points 
+(`r report.ci(mod.mlm.dosage.sum$coefficients["pb_use_sum",1], mod.mlm.dosage.sum$coefficients["pb_use_sum",2])`, 
+d = `r report(mod.mlm.dosage.standardized.sum$coefficients["pb_use_sum",1])`, 
+p `r report.p(mod.mlm.dosage.sum$coefficients["pb_use_sum",5])`); 
+compared to 
+b = `r report(doses.df.summary$TE.random)`, d = `r report(doses.df.standardized.summary$TE.random)`
+estimated via meta-analyses).  
+
+
+
+### Time Remaining
+
+```{r time-remaining-mlm, warning=F, echo=T, eval=T}
+exam.lvl$time_left_trunc <- ifelse(exam.lvl$time_left>10,10,exam.lvl$time_left)
+
+mod.mlm.timeleft.sum = summary(lmer(exam_score ~ time_left_trunc + 
+                                      (1|exam_key:course:semester) + (1|course) + (1|semester),
+                                    data=exam.lvl) )
+
+mod.mlm.timeleft.standardized.sum = 
+  summary(lmer(exam_score_standardized ~ time_left_trunc + 
+                 (1|exam_key:course:semester) + (1|course) + (1|semester),
+               data=exam.lvl) )
+```
+
+
+To estimate how timing of usage affects exam performance, we again considered the subset of Exam Playbook users, but now examined performance on each individual exam. We defined a variable, “time_left”, which counts the number of days between the Exam Playbook usage and the exam itself. We used this to predict students’ exam score. Because this was at the exam level (which is nested within course and semester), we used the following random effect structure:
+
+```
+lmer(exam_score ~ time_left + (1|exam:course:semester) + (1|course) + (1|semester), data= playbook_users_exam_level)
+```
+	
+We found that students who used the Exam Playbook benefited more from using it earlier 
+(b = `r report(mod.mlm.timeleft.sum$coefficients["time_left_trunc",1])`
+percentage points per day
+(`r report.ci(mod.mlm.timeleft.sum$coefficients["time_left_trunc",1], mod.mlm.timeleft.sum$coefficients["time_left_trunc",2])`, 
+d = `r report(mod.mlm.timeleft.standardized.sum$coefficients["time_left_trunc",1])`, 
+p `r report.p(mod.mlm.timeleft.sum$coefficients["time_left_trunc",5])`); 
+compared to 
+b=`r report(timing.df.summary$TE.random)`, d = `r report(timing.df.standardized.summary$TE.random)`
+estimated via meta-analyses).
+
+
+
+
+# R Session Info (for reproducibility)
+
+```{r session-info}
+sessionInfo()
+```
+
